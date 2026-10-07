@@ -171,7 +171,7 @@ Everything is driven by environment variables (see **`env.example`** for the ful
 |---|---|---|
 | `VAULT_PATH` | — *(required)* | Absolute path to your vault. |
 | `VAULT_SEARCH_DATA_DIR` | `~/.vault-search` | Where indexes/caches/logs live. |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint. |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint. |
 | `VAULT_SEARCH_EMBEDDING_MODEL` | `bge-m3` | Vault embedding model. |
 | `VAULT_SEARCH_API_PORT` | `3789` | API server port. |
 | `CLAUDE_CMD` | `claude` | CLI used for Hybrid/Free chat. |

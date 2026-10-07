@@ -171,7 +171,7 @@ claude mcp add vault-search -- python "/abs/path/to/server/mcp_thin.py"
 |---|---|---|
 | `VAULT_PATH` | —（必填） | vault 的絕對路徑。 |
 | `VAULT_SEARCH_DATA_DIR` | `~/.vault-search` | 索引／快取／log 存放處。 |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama 端點。 |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama 端點。 |
 | `VAULT_SEARCH_EMBEDDING_MODEL` | `bge-m3` | vault embedding 模型。 |
 | `VAULT_SEARCH_API_PORT` | `3789` | API server 連接埠。 |
 | `CLAUDE_CMD` | `claude` | Hybrid／Free 對話用的 CLI。 |

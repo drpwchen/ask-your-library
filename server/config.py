@@ -84,7 +84,7 @@ SKIP_FOLDERS = set(_csv(
 
 # --- LanceDB / Ollama -------------------------------------------------------
 DB_PATH = _path("VAULT_SEARCH_DB_PATH", str(DATA_DIR / "lance_db"))
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 # Embedding model for vault notes. bge-m3 is bilingual (CN/EN), 1024-dim, runs on CPU.
 EMBEDDING_MODEL = os.environ.get("VAULT_SEARCH_EMBEDDING_MODEL", "bge-m3")
