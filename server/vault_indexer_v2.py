@@ -460,7 +460,30 @@ def get_or_create_table(db, name: str, schema: pa.Schema):
     return db.create_table(name, schema=schema, mode="overwrite")
 
 
+def _unload_embedder(client) -> None:
+    """Drop the embedding model from Ollama now instead of after EMBED_KEEP_ALIVE.
+
+    The 2h keep_alive only exists to bridge idle gaps INSIDE a run. Left in place
+    after the run it pins the runner (~4 GB commit) for two more hours. An empty
+    input with keep_alive=0 is Ollama's documented unload call. Best-effort: a
+    failure is logged and never fails the index run.
+    """
+    try:
+        client.embed(model=EMBEDDING_MODEL, input=[], keep_alive=0)
+        print(f"[unload] {EMBEDDING_MODEL} released from Ollama", flush=True)
+    except Exception as e:
+        print(f"[unload] could not unload {EMBEDDING_MODEL}: {e}", flush=True)
+
+
 def index_vault_v2(incremental: bool = False, limit: int | None = None):
+    client = ollama.Client(host=OLLAMA_HOST)
+    try:
+        _index_vault_v2(client, incremental, limit)
+    finally:
+        _unload_embedder(client)
+
+
+def _index_vault_v2(client, incremental: bool, limit: int | None):
     print(f"[start] vault_indexer_v2 — {now_iso()}", flush=True)
     print(f"  incremental={incremental} limit={limit}", flush=True)
 
@@ -488,7 +511,6 @@ def index_vault_v2(incremental: bool = False, limit: int | None = None):
     hash_cache = load_json(HASH_CACHE_PATH) if incremental else {}
     error_log = load_json(ERROR_LOG_PATH)
 
-    client = ollama.Client(host=OLLAMA_HOST)
     watchdog = LatencyWatchdog(
         WATCHDOG_BASELINE_BATCHES, WATCHDOG_MULTIPLIER, WATCHDOG_TRIGGER_CONSECUTIVE
     )
