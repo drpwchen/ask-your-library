@@ -8,6 +8,20 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.9.1] — 2026-11-03 — Model unloaded after indexing; faster Ollama calls on Windows
+
+### Fixed
+- **The v2 indexer left the embedding model loaded for two hours after it finished.**
+  Embedding calls carry `keep_alive="2h"` so the runner survives idle gaps between
+  batches, but nothing ever shortened it at the end, so a nightly run kept about
+  4 GB of memory commit pinned until the timer expired. `index_vault_v2` now sends
+  one `keep_alive=0` unload when the run ends, on failure as well as success; an
+  unload that itself fails is logged and does not fail the run.
+- **Every Ollama call on Windows waited about 2 seconds first.** The default `OLLAMA_HOST`
+  was `http://localhost:11434`; Windows tries IPv6 (`::1`) first, Ollama listens on IPv4,
+  and each call paid for the failed attempt. The default is now `http://127.0.0.1:11434`.
+  An `OLLAMA_HOST` you set yourself is used as before.
+
 ## [2.9.0] — 2026-09-06 — Parent-child vault index, one GPU lease, no hardcoded folders
 
 Vault search gets the retrieval architecture the textbook corpus has had for
@@ -75,12 +89,6 @@ suit any vault rather than the author's.
   panel hid rows the endpoint had returned. Whatever the budget cuts is now asked
   for again. On a 50,700-chunk vault this took a 40-candidate lookup from 36
   answers to 40.
-- **The v2 indexer left the embedding model loaded for two hours after it finished.**
-  Embedding calls carry `keep_alive="2h"` so the runner survives idle gaps between
-  batches, but nothing ever shortened it at the end, so a nightly run kept about
-  4 GB of memory commit pinned until the timer expired. `index_vault_v2` now sends
-  one `keep_alive=0` unload when the run ends, on failure as well as success; an
-  unload that itself fails is logged and does not fail the run.
 
 ### Notes
 
