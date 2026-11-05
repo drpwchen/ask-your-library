@@ -1,0 +1,5 @@
+{
+  "_comment": "Scope name -> top-level vault folders. Unlisted folders are outside every named scope; 'personal' is everything not listed. '_default' is used when a caller names no scope.",
+  "_default": "work",
+  "work": ["Projects", "Meetings", "Reference", "Inbox"]
+}

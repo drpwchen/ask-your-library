@@ -600,6 +600,10 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
             if st["done_p"] >= st["expected_p"] and st["done_c"] >= st["expected_c"]:
                 if not st["failed"]:
                     hash_cache[rp] = st["h"]
+                    # The whole file is in the index now, so every earlier
+                    # failure logged for it is resolved. Without this the log
+                    # kept 852 long-fixed entries "pending" for months.
+                    resolve_file_errors(error_log, rp)
                 done.append(rp)
         for rp in done:
             del file_state[rp]
@@ -747,8 +751,53 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
         print("  ⚠ dropped chunks — re-run with --incremental once GPU is free.", flush=True)
 
 
+def resolve_file_errors(error_log: dict, rel_path: str, status: str = "fixed") -> int:
+    """Mark every open error entry of one file resolved. Returns how many.
+
+    File-level on purpose: when a file is re-indexed its parent ids may change,
+    so an entry keyed by an old parent id can never be matched chunk by chunk.
+    """
+    n = 0
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    for e in error_log.values():
+        if e.get("file") == rel_path and e.get("status") not in ("fixed", "obsolete"):
+            e["status"] = status
+            e["last_seen"] = now
+            n += 1
+    return n
+
+
+def reconcile_error_log(error_log: dict, hash_cache: dict, indexed_files: set,
+                        vault_path: Path) -> dict:
+    """Close error entries that later runs already fixed — no embedding needed.
+
+    fixed     the file's current content hash is in the cache (a cache entry is
+              written only when every chunk of the file embedded) and the file
+              has rows in the index
+    obsolete  the file no longer exists
+    open      anything else — it really still needs a re-run
+    """
+    out = {"fixed": 0, "obsolete": 0, "open": 0}
+    for rp in sorted({e.get("file") for e in error_log.values()
+                      if e.get("status") not in ("fixed", "obsolete")}):
+        fp = vault_path / rp
+        if not fp.exists():
+            out["obsolete"] += resolve_file_errors(error_log, rp, "obsolete")
+            continue
+        h = file_hash(fp.read_text(encoding="utf-8", errors="replace"))
+        if hash_cache.get(rp) == h and rp in indexed_files:
+            out["fixed"] += resolve_file_errors(error_log, rp)
+        else:
+            out["open"] += sum(1 for e in error_log.values()
+                               if e.get("file") == rp and e.get("status") not in ("fixed", "obsolete"))
+    return out
+
+
 def main():
     p = argparse.ArgumentParser(description="Vault indexer v2 (parent-child chunking)")
+    p.add_argument("--reconcile-errors", action="store_true",
+                   help="Close error-log entries for files that are already fully indexed "
+                        "(no GPU, no embedding), then exit")
     p.add_argument("--incremental", action="store_true")
     p.add_argument("--limit", type=int, help="Smoke test: only first N files, no table drop")
     p.add_argument("--no-gpu-lease", action="store_true",
@@ -756,6 +805,18 @@ def main():
                         "collide with the embedder and silently drop chunks; only for "
                         "machines with no lease script configured)")
     args = p.parse_args()
+
+    if args.reconcile_errors:
+        log = load_json(ERROR_LOG_PATH)
+        db = lancedb.connect(str(DB_PATH))
+        indexed = set()
+        if VCHUNKS_TABLE in db.table_names():
+            indexed = set(db.open_table(VCHUNKS_TABLE).search().select(["file"])
+                          .limit(10**9).to_pandas()["file"].unique())
+        res = reconcile_error_log(log, load_json(HASH_CACHE_PATH), indexed, VAULT_PATH)
+        save_json(ERROR_LOG_PATH, log, indent=2)
+        print(f"[reconcile] {res}", flush=True)
+        return
 
     # Ordinary lease taker: always acquire before touching the GPU, refuse to
     # run without it. No lease script configured (the default) = no-op.

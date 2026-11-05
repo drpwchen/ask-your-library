@@ -13,7 +13,7 @@ Built by a physician to study from a vault of thousands of clinical notes, but *
 This repo ships **two front-ends over the same local LanceDB index + retrieval core** — use either or both:
 
 - **`vault-search-obsidian`** — the Obsidian plugin (Search / Related Notes / Chat in the sidebar), talking to a small local API server. → [Quickstart](#vault-search-obsidian--the-obsidian-plugin)
-- **`vault-search-mcp`** — an MCP server exposing the same search as tools (`vault_search`, `vault_similar`, `vault_stats`, `textbook_search`) to Claude Code or any MCP client. No Obsidian required. → [Quickstart](#vault-search-mcp--use-it-from-claude-code-or-any-mcp-client)
+- **`vault-search-mcp`** — an MCP server exposing the same search as tools (`vault_search`, `vault_similar`, `vault_related`, `vault_stats`, `textbook_search`, and `lecture_search` when a lecture corpus is configured) to Claude Code or any MCP client. No Obsidian required. → [Quickstart](#vault-search-mcp--use-it-from-claude-code-or-any-mcp-client)
 
 Both reuse the same `server/` core (indexer · scoring · Personalized-PageRank · knowledge graph), so you index once and query from wherever you like.
 
@@ -196,6 +196,22 @@ cd server && python textbook_indexer.py
 ```
 
 Adds a `textbook_search` tool (MCP + HTTP). Optionally rank trusted sources higher with a boost file — see `examples/source_boost.example.json` and `VAULT_SEARCH_SOURCE_BOOST`.
+
+**Book table.** A `books.json` (`VAULT_SEARCH_BOOKS_META`, see `examples/books.example.json`) is joined onto textbook results at query time: sources marked `superseded` or `derivative` are hidden unless you pass `include_superseded`, `corpus_type` restricts a search to e.g. guidelines, and tier/year break similarity ties. No reindex needed.
+
+**Lecture corpus.** Index a second reference corpus into its own DB (same indexer, different `VAULT_SEARCH_DB_PATH`) and point `VAULT_SEARCH_LECTURE_DB_PATH` at it: a `lecture_search` tool appears, ranked separately from `textbook_search`.
+</details>
+
+<details>
+<summary><b>Search scopes (keep parts of the vault out of a search)</b></summary>
+
+A JSON map (`VAULT_SEARCH_SCOPE_MAP`, see `examples/scope_map.example.json`) names the top-level folders of each scope. It is **fail-closed**: a folder not listed under a scope is outside it, so a new folder never leaks into a scoped search. `personal` is everything not listed anywhere, `all` turns the filter off, and the default scope is set on the server — a caller that never mentions scope gets the safe default. Applies to `vault_search`, `vault_similar`, `vault_related` and the chat context.
+</details>
+
+<details>
+<summary><b>Evaluation harness</b></summary>
+
+`eval/` measures retrieval (hit@k, MRR, page-window hit, contamination by outdated sources) and claim-level answers, with paired tests (McNemar, cluster bootstrap) for A/B decisions. See [`eval/README.md`](eval/README.md). Your real question sets stay outside the repo.
 </details>
 
 <details>

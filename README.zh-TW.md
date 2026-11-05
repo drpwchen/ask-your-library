@@ -13,7 +13,7 @@
 這個 repo 提供**兩個前端、共用同一份地端 LanceDB 索引 + 檢索核心**，兩個都用或擇一都行：
 
 - **`vault-search-obsidian`** — Obsidian plugin（側欄的 Search／Related Notes／Chat），連到一支小型地端 API server。→ [快速開始](#vault-search-obsidian--obsidian-plugin)
-- **`vault-search-mcp`** — 一支 MCP server，把同一套搜尋以工具（`vault_search`、`vault_similar`、`vault_stats`、`textbook_search`）開給 Claude Code 或任何 MCP client。**不需要 Obsidian**。→ [快速開始](#vault-search-mcp--在-claude-code或任何-mcp-client中使用)
+- **`vault-search-mcp`** — 一支 MCP server，把同一套搜尋以工具（`vault_search`、`vault_similar`、`vault_related`、`vault_stats`、`textbook_search`，以及設定了演講語料時的 `lecture_search`）開給 Claude Code 或任何 MCP client。**不需要 Obsidian**。→ [快速開始](#vault-search-mcp--在-claude-code或任何-mcp-client中使用)
 
 兩者共用同一份 `server/` 核心（indexer · scoring · Personalized PageRank · 知識圖譜），所以你只要索引一次，就能從任何地方查詢。
 
@@ -196,6 +196,22 @@ cd server && python textbook_indexer.py
 ```
 
 會新增 `textbook_search` 工具（MCP + HTTP）。可用 boost 檔讓你信任的來源排前面——見 `examples/source_boost.example.json` 與 `VAULT_SEARCH_SOURCE_BOOST`。
+
+**書目表。** `books.json`（`VAULT_SEARCH_BOOKS_META`，範例見 `examples/books.example.json`）在查詢時併到教科書結果上：標成 `superseded`／`derivative` 的來源預設不出現（傳 `include_superseded` 才看得到）；`corpus_type` 可只搜指引；相似度打平時依 tier、年份排序。不必重建索引。
+
+**演講語料。** 用同一支 indexer 把第二份語料建進另一個 DB（換 `VAULT_SEARCH_DB_PATH`），再把 `VAULT_SEARCH_LECTURE_DB_PATH` 指過去，就會多一個 `lecture_search` 工具，與 `textbook_search` 分開排名。
+</details>
+
+<details>
+<summary><b>搜尋範圍（讓部分資料夾不進搜尋）</b></summary>
+
+用一份 JSON 對照表（`VAULT_SEARCH_SCOPE_MAP`，範例見 `examples/scope_map.example.json`）列出每個範圍包含哪些頂層資料夾。採 **fail-closed**：沒列在某範圍底下的資料夾就不屬於它，新資料夾不會悄悄混進有範圍限制的搜尋。`personal`＝所有沒被列到的資料夾，`all`＝不過濾；預設範圍寫在 server 端，呼叫端沒指定就用安全的預設值。適用於 `vault_search`、`vault_similar`、`vault_related` 與 chat 的 context。
+</details>
+
+<details>
+<summary><b>評測工具</b></summary>
+
+`eval/` 量檢索（hit@k、MRR、頁窗命中、舊來源污染率）與逐條 claim 的答案品質，A/B 決策用配對檢定（McNemar、cluster bootstrap）。見 [`eval/README.md`](eval/README.md)。真實題庫請放在 repo 之外。
 </details>
 
 <details>

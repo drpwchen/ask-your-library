@@ -88,9 +88,19 @@ def _get_tools() -> list:
             return []
 
 
+# Which agent session is asking, for the server's search logs. Claude Code
+# exports its session id to child processes; any other client gets one id per
+# thin-client process, which lives exactly as long as the client session.
+SESSION_ID = (os.environ.get("CLAUDE_CODE_SESSION_ID")
+              or f"thin-{os.getpid()}-{int(__import__('time').time())}")
+_CLIENT = {"name": None}
+
+
 def _call_tool(name: str, arguments: dict) -> str:
     try:
-        return _request("/api/mcp/call", {"name": name, "arguments": arguments})["text"]
+        ctx = {"caller": "mcp", "session_id": SESSION_ID, "client": _CLIENT["name"]}
+        return _request("/api/mcp/call",
+                        {"name": name, "arguments": arguments, "context": ctx})["text"]
     except urllib.error.HTTPError as e:
         return json.dumps({"error": f"api_server returned HTTP {e.code}: {e.reason}"})
     except Exception as e:
@@ -131,6 +141,7 @@ def main():
         msg_id = msg.get("id")
 
         if method == "initialize":
+            _CLIENT["name"] = ((msg.get("params") or {}).get("clientInfo") or {}).get("name")
             send({
                 "jsonrpc": "2.0", "id": msg_id,
                 "result": {

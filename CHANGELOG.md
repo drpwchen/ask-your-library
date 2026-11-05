@@ -8,6 +8,57 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.10.0] — 2026-11-06 — Chat on the shared search path, search scopes, book table, eval harness
+
+### Fixed
+- **The plugin chat searched a stale index and quoted the wrong pages.** Its context
+  builder ran its own retrieval: the v1 `vault` table (frozen since the v2 switch)
+  and a textbook query that read a `page` column the v2 schema does not have. Every
+  passage came back as "page 0", so the "expanded context" sent to the model was
+  the first pages of the file, not the passage that matched. It also skipped the
+  derivative-source exclusion: on a 436-question benchmark, 25% of chat answers had
+  an excluded source in the top 3, against 2.3% on the tool path. Chat now calls
+  the same functions as `vault_search` / `textbook_search` / `lecture_search`
+  (3 / 4 / 2 results), with the real page range on every passage.
+- **The vault v2 indexer never closed its error log.** A file that failed once and
+  was fully re-indexed later kept its entries `pending` forever (852 on the author's
+  vault, all long since indexed). Entries are now closed when their file completes,
+  and `vault_indexer_v2.py --reconcile-errors` closes old ones without embedding
+  anything: fixed when the file's current hash is cached and it has rows in the
+  index, obsolete when the file is gone, open otherwise.
+
+### Added
+- **Search scopes.** A JSON map of scope → top-level folders (`VAULT_SEARCH_SCOPE_MAP`,
+  default `~/.vault-search/scope_map.json`) filters `vault_search`, `vault_similar`,
+  `vault_related` and the chat context with a LanceDB prefilter — no reindex.
+  Fail-closed: unlisted folders are outside every named scope, `personal` is the
+  complement, `all` disables it, an unknown scope or unreadable map refuses instead
+  of searching everything. The default scope comes from the server (map `_default`
+  or `VAULT_SEARCH_DEFAULT_SCOPE`), never from the prompt. Graph-linked suggestions
+  are filtered too. No map = no change.
+- **Book table joined at query time** (`VAULT_SEARCH_BOOKS_META`, default
+  `~/.vault-search/books.json`): edition / year / tier / corpus_type / status /
+  superseded_by per source folder. `textbook_search` hides `superseded` and
+  `derivative` sources unless `include_superseded=true`, accepts `corpus_type`
+  (e.g. `guideline`), breaks similarity ties by tier then year, and prints a
+  one-line `source:` provenance under each passage.
+- **`lecture_search`** — a third corpus in its own DB (`VAULT_SEARCH_LECTURE_DB_PATH`,
+  default `~/.vault-search/lecture_db`), same schema and model as the textbook
+  index, ranked separately. The tool is listed only when that DB exists.
+- **Who asked, in the search logs.** Every log line now carries `caller`
+  (`mcp` / `chat`) and `session_id` (the thin client forwards Claude Code's session
+  id; chat uses the request id), and a zero-result search is logged as `warn`.
+- **`eval/`** — retrieval and claim-level evaluation harness: adapters for the tool
+  path and the chat path, hit@k / MRR / recall@10 / page-window hit /
+  contamination@3, McNemar and cluster-bootstrap paired tests, LLM pool
+  completion, and an answer-then-grade end-to-end step. Stdlib-only metrics, tested
+  in CI. Real question sets stay outside the repo.
+
+### Changed
+- `textbook_search` accepts an experimental `retrieval` switch (`vector` default,
+  `fts`, `hybrid` with RRF) that the eval harness uses; it is not in the tool schema
+  and needs a native FTS index you build yourself.
+
 ## [2.9.1] — 2026-11-03 — Model unloaded after indexing; faster Ollama calls on Windows
 
 ### Fixed

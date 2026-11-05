@@ -176,6 +176,18 @@ PATH_WEIGHTS = (
 # Folder name treated as "archived" (deprioritized unless include_archived=True).
 ARCHIVE_FOLDER = os.environ.get("VAULT_SEARCH_ARCHIVE_FOLDER", "")
 
+# --- Search scopes ----------------------------------------------------------
+# Optional JSON map of scope name -> top-level folders, e.g.
+#   {"_default": "work", "work": ["Projects", "Meetings"]}
+# Folders not listed under a scope are OUT of it (fail-closed); the implicit
+# scope "personal" is everything not listed anywhere. See server/scope.py.
+# No map file = scopes disabled, every search sees the whole vault.
+SCOPE_MAP_PATH = _path("VAULT_SEARCH_SCOPE_MAP", str(DATA_DIR / "scope_map.json"))
+# Scope used when a caller does not name one. Precedence: this env var, then the
+# map's "_default" key, then "all". It lives on the server, not in a prompt, so
+# a caller that forgets to ask for a scope still gets the safe one.
+DEFAULT_SCOPE_ENV = os.environ.get("VAULT_SEARCH_DEFAULT_SCOPE", "")
+
 # --- Cowork / derivative exclusion ------------------------------------------
 # Substrings (case-insensitive) marking derivative notes to filter out of search
 # by default (e.g. shared exam-prep notes you should not cite as primary sources).
@@ -201,6 +213,20 @@ TEXTBOOK_EMBEDDING_MODEL = os.environ.get("VAULT_SEARCH_TEXTBOOK_MODEL", "qwen3-
 TEXTBOOK_HASH_CACHE = _path("VAULT_SEARCH_TEXTBOOK_HASH", str(DATA_DIR / "textbook_hashes.json"))
 TEXTBOOK_ERROR_LOG = _path("VAULT_SEARCH_TEXTBOOK_ERRORS", str(DATA_DIR / "textbook_index_errors.json"))
 TEXTBOOK_ERROR_ARCHIVE = _path("VAULT_SEARCH_TEXTBOOK_ERRORS_ARCHIVE", str(DATA_DIR / "textbook_index_errors.archive.json"))
+# Optional book metadata table, joined onto textbook results at query time
+# (edition / year / tier / corpus_type / status / superseded_by). Keyed by the
+# book folder name. See examples/books.example.json and server/books_meta.py.
+BOOKS_META_PATH = _path("VAULT_SEARCH_BOOKS_META", str(DATA_DIR / "books.json"))
+
+# --- Lecture corpus (optional, third corpus) --------------------------------
+# A second textbook-format LanceDB (same indexer, same model) holding lecture
+# notes. Searched by `lecture_search`; ranked separately, never merged with the
+# textbook list. Disabled when the directory does not exist.
+LECTURE_DB_PATH = _path("VAULT_SEARCH_LECTURE_DB_PATH", str(DATA_DIR / "lecture_db"))
+LECTURE_SEARCH_LOG_PATH = _path(
+    "VAULT_SEARCH_LECTURE_LOG_PATH", str(DATA_DIR / "lecture_search_log.jsonl")
+)
+
 # Per-source ranking boost for the textbook corpus (see examples/source_boost.example.json).
 SOURCE_BOOST_PATH = _path("VAULT_SEARCH_SOURCE_BOOST", None)
 # --- GPU lease (optional) ----------------------------------------------------

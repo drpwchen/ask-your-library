@@ -92,7 +92,11 @@ DEFAULT_MAX_PER_BOOK = 3
 from config import (
     COWORK_PATTERNS, SEARCH_LOG_PATH,
     VAULT_V2_FLAG, VAULT_QUERY_PREFIX, VAULT_SEARCH_LOG_PATH,
+    SCOPE_MAP_PATH, DEFAULT_SCOPE_ENV,
+    LECTURE_DB_PATH, LECTURE_SEARCH_LOG_PATH, BOOKS_META_PATH,
 )
+import scope as S
+import books_meta
 
 def _is_cowork_path(s: str) -> bool:
     """Check if a book name, folder, or file path matches cowork exclusion patterns."""
@@ -131,6 +135,33 @@ if not _vault_logger.handlers:
     _vh.setFormatter(logging.Formatter("%(message)s"))
     _vault_logger.addHandler(_vh)
     _vault_logger.propagate = False
+
+_lecture_logger = logging.getLogger("lecture_search")
+_lecture_logger.setLevel(logging.INFO)
+if not _lecture_logger.handlers:
+    LECTURE_SEARCH_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _lh = logging.handlers.RotatingFileHandler(
+        str(LECTURE_SEARCH_LOG_PATH), maxBytes=50 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    _lh.setFormatter(logging.Formatter("%(message)s"))
+    _lecture_logger.addHandler(_lh)
+    _lecture_logger.propagate = False
+
+
+def _log(logger, entry: dict, ctx: dict | None) -> None:
+    """Write one observability line. Adds who asked (caller, session_id) and
+    marks a zero-result search as a warning so it stands out when grepping."""
+    ctx = ctx or {}
+    entry["caller"] = ctx.get("caller") or "mcp"
+    entry["session_id"] = ctx.get("session_id")
+    n = entry.get("n_returned")
+    entry["level"] = "warn" if n == 0 else "info"
+    if n == 0:
+        entry["warn"] = "zero_results"
+    try:
+        logger.info(_safe_json_dumps(entry))
+    except Exception:
+        pass  # never let logging break search
 
 
 def find_relations_for_notes(graph_relations: list[dict], note_names: set[str]) -> list[dict]:
@@ -199,6 +230,30 @@ def get_textbook_parents_table():
     if PARENTS_TABLE not in db.table_names():
         return None
     return db.open_table(PARENTS_TABLE)
+
+
+# --- Lecture corpus: a second textbook-format DB, opened by path -------------
+
+def lecture_enabled() -> bool:
+    return bool(LECTURE_DB_PATH) and LECTURE_DB_PATH.exists()
+
+
+def _lecture_db():
+    return lancedb.connect(str(LECTURE_DB_PATH))
+
+
+def get_corpus_tables(corpus: str):
+    """(chunks, parents) for 'textbook' or 'lecture'; (None, None) when absent."""
+    if corpus == "lecture":
+        if not lecture_enabled():
+            return None, None
+        db = _lecture_db()
+    else:
+        db = open_db()
+    names = db.table_names()
+    chunks = db.open_table(CHUNKS_TABLE) if CHUNKS_TABLE in names else None
+    parents = db.open_table(PARENTS_TABLE) if PARENTS_TABLE in names else None
+    return chunks, parents
 
 
 # IN-list size per query. LanceDB scans the parents table for this filter, so one
@@ -434,15 +489,16 @@ def format_related_markdown(related: list[dict], note: str) -> str:
     return "\n".join(lines)
 
 
-def format_textbook_markdown(results: list[dict], query: str) -> str:
-    """Render textbook_search results as compact Markdown.
+def format_textbook_markdown(results: list[dict], query: str, header: str = "textbook_search") -> str:
+    """Render textbook_search / lecture_search results as compact Markdown.
 
     Drops internal/duplicate fields (parent_id, section==section_path,
     page==page_start, parent_truncated, *_tokens, chunk_*, n_siblings,
     heading_origin, and the child `text` excerpt already contained in parent_text)."""
     if not results:
-        return f'No textbook passages found for "{query}".'
-    lines = [f'# textbook_search: "{query}" — {len(results)} passages', ""]
+        what = "lecture" if header == "lecture_search" else "textbook"
+        return f'No {what} passages found for "{query}".'
+    lines = [f'# {header}: "{query}" — {len(results)} passages', ""]
     for i, r in enumerate(results, 1):
         loc = []
         ps, pe = r.get("page_start", 0), r.get("page_end", 0)
@@ -456,6 +512,9 @@ def format_textbook_markdown(results: list[dict], query: str) -> str:
         head += " · " + " · ".join(loc)
         lines.append(head)
         lines.append(f"   ({r.get('file','')})")
+        prov = books_meta.describe(r.get("meta") or {})
+        if prov:
+            lines.append(f"   source: {prov}")
         ptext = r.get("parent_text") or r.get("text") or ""
         if ptext:
             lines.append(ptext)
@@ -482,6 +541,10 @@ TOOLS = [
                     "type": "integer",
                     "description": "Number of results to return (default: 10, max: 30)",
                     "default": 10
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Optional: which part of the vault to search — a scope name from the server's scope map, 'personal' (folders not in any scope) or 'all'. Omit to use the server's default scope."
                 },
                 "folder": {
                     "type": "string",
@@ -525,6 +588,10 @@ TOOLS = [
                     "type": "integer",
                     "description": "Number of related notes to return (default: 12, max: 30)",
                     "default": 12
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Optional: which part of the vault to search — a scope name from the server's scope map, 'personal' (folders not in any scope) or 'all'. Omit to use the server's default scope."
                 }
             },
             "required": ["note"]
@@ -544,6 +611,10 @@ TOOLS = [
                     "type": "integer",
                     "description": "Number of similar notes to return (default: 10)",
                     "default": 10
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Optional: which part of the vault to search — a scope name from the server's scope map, 'personal' (folders not in any scope) or 'all'. Omit to use the server's default scope."
                 }
             },
             "required": ["note_name"]
@@ -585,6 +656,15 @@ TOOLS = [
                     "type": "boolean",
                     "description": "When true (default), filter out derivative sources matching the configured exclude patterns. Set false only if you explicitly need to inspect them (rare — e.g., for cleanup or comparison). No-op when no exclude patterns are configured.",
                     "default": True
+                },
+                "corpus_type": {
+                    "type": "string",
+                    "description": "Optional: restrict to one source type from the book table, e.g. 'guideline' or 'textbook'. Use this to search guidelines, rather than guessing a book folder name."
+                },
+                "include_superseded": {
+                    "type": "boolean",
+                    "description": "When false (default), sources marked superseded or derivative in the book table are hidden. Set true to compare an old edition against its replacement.",
+                    "default": False
                 }
             },
             "required": ["query"]
@@ -592,38 +672,78 @@ TOOLS = [
     }
 ]
 
+LECTURE_TOOL = {
+    "name": "lecture_search",
+    "description": "Semantic search across the lecture-notes corpus (talks and courses the user attended: what a specific speaker taught and how they do it). Separate index and separate ranking from textbook_search — use it for 'what did the lecture say' questions, and textbook_search for reference-text answers.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Natural language search query (Chinese, English, or mixed)"},
+            "n_results": {"type": "integer", "description": "Number of results (default: 10, max: 50)", "default": 10},
+            "course": {"type": "string", "description": "Optional: restrict to one course folder"},
+            "full_parent": {"type": "boolean", "description": "Return untruncated parent text (same caps as textbook_search)", "default": False}
+        },
+        "required": ["query"]
+    }
+}
+
+
+if lecture_enabled():
+    TOOLS.append(LECTURE_TOOL)
+
+
+def _row_similarity(row) -> float:
+    """Cosine similarity from `_distance`; 0.0 for keyword-only rows (FTS/hybrid
+    hits the vector side never scored carry no distance, or NaN)."""
+    d = row.get("_distance")
+    try:
+        d = float(d)
+    except (TypeError, ValueError):
+        return 0.0
+    if d != d:  # NaN
+        return 0.0
+    return round(max(0.0, 1.0 - d), 4)
+
 
 class TextbookIndexMissing(RuntimeError):
     """The textbook v2 index has not been built yet."""
 
 
-def _textbook_search_v2(arguments: dict) -> str:
+def _textbook_search_v2(arguments: dict, ctx: dict | None = None, corpus: str = "textbook") -> str:
     """MCP entry point: run the v2 search and render it as compact Markdown.
 
     Thin wrapper over `_textbook_search_v2_raw()` so tests and benchmarks can
     consume structured results instead of parsing Markdown back into dicts.
     """
     try:
-        results = _textbook_search_v2_raw(arguments)
+        results = _textbook_search_v2_raw(arguments, ctx=ctx, corpus=corpus)
     except TextbookIndexMissing as exc:
         return json.dumps({"error": str(exc)})
-    return _clean(format_textbook_markdown(results, _clean(arguments["query"])))
+    header = "lecture_search" if corpus == "lecture" else "textbook_search"
+    return _clean(format_textbook_markdown(results, _clean(arguments["query"]), header=header))
 
 
-def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
+def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
+                            corpus: str = "textbook") -> list[dict]:
     """v2 parent-child semantic search with dedup, parent context, observability.
 
-    Returns the structured result list; the Markdown rendering lives in the
-    `_textbook_search_v2()` wrapper above."""
+    `corpus` picks the database: "textbook" (the main index) or "lecture" (the
+    lecture-notes DB, same schema and model). Returns the structured result
+    list; the Markdown rendering lives in the `_textbook_search_v2()` wrapper."""
     t0 = time.time()
     query = _clean(arguments["query"])
     n = min(arguments.get("n_results", 10), 50)
-    book_filter = arguments.get("book")
+    book_filter = arguments.get("book") or arguments.get("course")
     full_parent = bool(arguments.get("full_parent", False))
     exclude_cowork = bool(arguments.get("exclude_cowork", True))
+    include_superseded = bool(arguments.get("include_superseded", False))
+    corpus_type = arguments.get("corpus_type") or None
+    meta = books_meta.load(BOOKS_META_PATH) if corpus == "textbook" else {}
 
-    chunks_table = get_textbook_chunks_table()
+    chunks_table, parents_table = get_corpus_tables(corpus)
     if chunks_table is None:
+        if corpus == "lecture":
+            raise TextbookIndexMissing(f"Lecture index not found at {LECTURE_DB_PATH}.")
         raise TextbookIndexMissing("Textbook v2 index not built. Run textbook_indexer.py first.")
 
     # Embed query with Qwen3 instruction prefix; L2 normalize
@@ -642,9 +762,28 @@ def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
 
     # Fetch n*10 to give dedup room (Gemini r5 #3)
     fetch_limit = n * 10
-    search_builder = chunks_table.search(query_embedding).metric("cosine").limit(fetch_limit)
-    if book_filter:
-        search_builder = search_builder.where(f"book = '{_escape_sql(book_filter)}'")
+    # `retrieval` is an EXPERIMENT switch for the eval harness, not part of the
+    # tool schema: "vector" (default, what the tool does), "fts" (keyword only)
+    # or "hybrid" (vector + FTS fused by RRF). The non-vector modes need a
+    # native FTS index on the chunks table's `text` column.
+    retrieval = arguments.get("retrieval", "vector")
+    fts_text = arguments.get("query_en") or query
+    if retrieval == "fts":
+        search_builder = chunks_table.search(fts_text, query_type="fts").limit(fetch_limit)
+    elif retrieval == "hybrid":
+        from lancedb.rerankers import RRFReranker
+        search_builder = (chunks_table.search(query_type="hybrid")
+                          .vector(query_embedding).text(fts_text)
+                          .distance_type("cosine")
+                          .rerank(RRFReranker()).limit(fetch_limit))
+    else:
+        search_builder = chunks_table.search(query_embedding).metric("cosine").limit(fetch_limit)
+    where = S.combine(
+        f"book = '{_escape_sql(book_filter)}'" if book_filter else None,
+        books_meta.prefilter(corpus_type, meta) if corpus == "textbook" else None,
+    )
+    if where:
+        search_builder = search_builder.where(where, prefilter=True)
     df = search_builder.to_pandas()
 
     # Score: cosine similarity = 1 - distance (since vectors L2-normalized)
@@ -667,7 +806,7 @@ def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
             "figure_ids": [_clean(str(s)) for s in (row.get("figure_ids") if row.get("figure_ids") is not None else [])],
             "has_figure_ref": bool(row.get("has_figure_ref", False)),
             "text": _clean(str(row.get("text", ""))),
-            "similarity": round(max(0.0, 1.0 - float(row.get("_distance", 0))), 4),
+            "similarity": _row_similarity(row),
         })
 
     # Cowork exclusion (default true) — drop derivative notes before dedup
@@ -676,6 +815,17 @@ def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
             r for r in raw_results
             if not _is_cowork_path(r.get("book", "")) and not _is_cowork_path(r.get("file", ""))
         ]
+
+    # Book metadata (books.json), joined here at query time: hide superseded /
+    # derivative sources unless asked, filter by corpus_type, and let tier /
+    # year break similarity ties. The lecture DB has no book table.
+    n_before_meta = len(raw_results)
+    if corpus == "textbook":
+        books_meta.annotate(raw_results, meta)
+        raw_results = [r for r in raw_results if books_meta.visible(r, include_superseded, corpus_type)]
+        if retrieval == "vector":  # fused rankings are not ordered by similarity
+            raw_results = books_meta.tie_break(raw_results)
+    hidden_by_meta = n_before_meta - len(raw_results)
 
     # Dedup: max children per parent
     parent_count: dict[str, int] = {}
@@ -735,7 +885,7 @@ def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
         remaining_budget = max(0, remaining_budget - quota)
 
     # One round trip for exactly the parents this search returns
-    parent_rows = fetch_textbook_parents(seen_parent_ids)
+    parent_rows = fetch_parents_by_id(parents_table, seen_parent_ids, PARENT_CACHE_COLUMNS)
 
     # Apply budget to enrich results with parent_text
     formatted_results = []
@@ -774,6 +924,8 @@ def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
             "heading_origin": r["heading_origin"],
             "figure_ids": r["figure_ids"],
             "has_figure_ref": r["has_figure_ref"],
+            "corpus": corpus,
+            "meta": r.get("meta", {}),
         })
 
     # Compute observability metrics
@@ -811,13 +963,16 @@ def _textbook_search_v2_raw(arguments: dict) -> list[dict]:
         "raw_parent_hit_rate": round(raw_unique, 3),
         "post_dedup_parent_hit_rate": round(deduped_unique, 3),
         "top_chunk_ids": [r["parent_id"] for r in formatted_results[:5]],
-        "top_books": list({r["book"] for r in formatted_results[:5]}),
+        # Rank order, not a set: a set's order follows PYTHONHASHSEED.
+        "top_books": list(dict.fromkeys(r["book"] for r in formatted_results[:5])),
         "latency_ms": latency_ms,
+        "corpus": corpus,
+        "n_returned": len(formatted_results),
+        "corpus_type_filter": corpus_type,
+        "retrieval": retrieval,
+        "hidden_by_books_meta": hidden_by_meta,
     }
-    try:
-        _search_logger.info(_safe_json_dumps(log_entry))
-    except Exception:
-        pass  # never let logging break search
+    _log(_lecture_logger if corpus == "lecture" else _search_logger, log_entry, ctx)
 
     return formatted_results
 
@@ -826,8 +981,12 @@ class NoVaultIndex(Exception):
     """Neither index is built — a setup problem, not a search failure."""
 
 
+def _folder_where(folder: str | None, scope_where: str | None) -> str | None:
+    return S.combine(f"folder = '{_escape_sql(folder)}'" if folder else None, scope_where)
+
+
 def _vault_retrieve_v1(query: str, folder: str | None, fetch_n: int,
-                       include_excerpt: bool) -> list[dict]:
+                       include_excerpt: bool, scope_where: str | None = None) -> list[dict]:
     """Legacy retrieval: the `vault` table, one tier, heading-sized chunks."""
     db = open_db()
     if TABLE_NAME not in db.table_names():
@@ -846,14 +1005,15 @@ def _vault_retrieve_v1(query: str, folder: str | None, fetch_n: int,
     table = get_table()
     query_embedding = embed_query(query)
     search_builder = table.search(query_embedding).metric("cosine").limit(fetch_n)
-    if folder:
-        search_builder = search_builder.where(f"folder = '{_escape_sql(folder)}'")
+    where = _folder_where(folder, scope_where)
+    if where:
+        search_builder = search_builder.where(where, prefilter=True)
     results_df = search_builder.to_pandas()
     return format_results(results_df, include_excerpt=include_excerpt)
 
 
 def _vault_retrieve_v2(query: str, folder: str | None, fetch_n: int,
-                       include_excerpt: bool) -> list[dict]:
+                       include_excerpt: bool, scope_where: str | None = None) -> list[dict]:
     """v2 retrieval: vault_chunks_v2, child hit → parent text as the excerpt."""
     chunks_table = get_vault_chunks_table()
     if chunks_table is None:
@@ -872,8 +1032,9 @@ def _vault_retrieve_v2(query: str, folder: str | None, fetch_n: int,
         qe = [v / s for v in qe]
 
     search_builder = chunks_table.search(qe).metric("cosine").limit(fetch_n)
-    if folder:
-        search_builder = search_builder.where(f"folder = '{_escape_sql(folder)}'")
+    where = _folder_where(folder, scope_where)
+    if where:
+        search_builder = search_builder.where(where, prefilter=True)
     df = search_builder.to_pandas()
 
     formatted = []
@@ -908,33 +1069,62 @@ def _vault_retrieve_v2(query: str, folder: str | None, fetch_n: int,
     return formatted
 
 
-def _vault_search(arguments: dict) -> str:
-    """vault_search: v1/v2 retrieval, then the shared rerank/graph tail + logging."""
+class ScopeRefused(Exception):
+    """The requested/default scope cannot be applied — refuse, never search wide."""
+
+
+def resolve_scope(arguments: dict) -> tuple[str, dict, str | None]:
+    """(scope name, scope map, SQL clause) for a vault call.
+
+    The default comes from the server config, so a caller that never mentions
+    scope gets the configured default — not the whole vault.
+    """
+    try:
+        smap, default = S.load_scope_config(SCOPE_MAP_PATH, DEFAULT_SCOPE_ENV)
+        sc = S.resolve(arguments.get("scope"), smap, default)
+    except S.ScopeError as e:
+        raise ScopeRefused(str(e)) from e
+    return sc, smap, S.where_clause(sc, smap)
+
+
+def _graph_folder(meta: dict, note: str) -> str:
+    return (meta.get(note) or {}).get("folder", "")
+
+
+def _vault_search_raw(arguments: dict, ctx: dict | None = None) -> dict:
+    """vault_search without the Markdown: v1/v2 retrieval, scope, rerank, graph.
+
+    Returns {"results", "graph_linked", "entities", "relations", "scope"}.
+    Shared by the MCP tool and the chat context builder so both see the same
+    ranking. Raises NoVaultIndex / ScopeRefused.
+    """
     t0 = time.time()
     query = _clean(arguments["query"])
     n = min(arguments.get("n_results", 10), 30)
     folder = arguments.get("folder")
     include_excerpt = arguments.get("include_excerpt", False)
     exclude_cowork = bool(arguments.get("exclude_cowork", True))
+    sc, smap, scope_where = resolve_scope(arguments)
 
     use_v2 = vault_v2_active()
     fallback_reason = None
-    try:
-        if use_v2:
-            try:
-                # v2 needs more dedup room: child chunks are denser, so a given
-                # number of hits covers fewer distinct notes.
-                formatted = _vault_retrieve_v2(query, folder, min(n * 10, 150), include_excerpt)
-            except Exception as e:
-                # v2 index missing or broken → serve v1 rather than fail the
-                # call. Recorded in the log so a silent downgrade stays visible.
-                use_v2 = False
-                fallback_reason = f"{type(e).__name__}: {e}"
-                formatted = _vault_retrieve_v1(query, folder, min(n * 5, 100), include_excerpt)
-        else:
-            formatted = _vault_retrieve_v1(query, folder, min(n * 5, 100), include_excerpt)
-    except NoVaultIndex as e:
-        return str(e)
+    if use_v2:
+        try:
+            # v2 needs more dedup room: child chunks are denser, so a given
+            # number of hits covers fewer distinct notes.
+            formatted = _vault_retrieve_v2(query, folder, min(n * 10, 150), include_excerpt, scope_where)
+        except Exception as e:
+            # v2 index missing or broken → serve v1 rather than fail the
+            # call. Recorded in the log so a silent downgrade stays visible.
+            use_v2 = False
+            fallback_reason = f"{type(e).__name__}: {e}"
+            formatted = _vault_retrieve_v1(query, folder, min(n * 5, 100), include_excerpt, scope_where)
+    else:
+        formatted = _vault_retrieve_v1(query, folder, min(n * 5, 100), include_excerpt, scope_where)
+
+    # Belt and braces: the prefilter already applied the scope; this re-check
+    # costs nothing and keeps a backend that ignored the WHERE from leaking.
+    formatted = [r for r in formatted if S.folder_in_scope(r.get("folder"), sc, smap)]
 
     raw_count = len(formatted)
     raw_unique_notes = len({r["note"] for r in formatted}) / max(1, raw_count)
@@ -970,15 +1160,19 @@ def _vault_search(arguments: dict) -> str:
     # Graph expansion: PPR (personalized PageRank) seeded on the top semantic
     # hits ranks multi-hop linked notes by graph proximity — replaces the old
     # naive 1-hop neighbor expansion (sparse-bridge recall@10 ~60% -> ~84%).
+    # Linked notes outside the scope are dropped: a scoped search must not
+    # surface out-of-scope titles through the side door.
     result_notes = {r["note"] for r in deduped}
     adjacency = graph.get("adjacency", {})
+    gmeta = graph.get("metadata", {})
     ppr_ranked = personalized_pagerank(
         adjacency,
         [r["note"] for r in deduped[:5]],
-        top_k=15,
+        top_k=15 if sc == S.ALL else 40,
         exclude=result_notes,
     )
-    graph_suggested = [nn for nn, _ in ppr_ranked]
+    graph_suggested = [nn for nn, _ in ppr_ranked
+                       if S.folder_in_scope(_graph_folder(gmeta, nn), sc, smap)][:15]
 
     # Remove internal mtime field from output
     for r in deduped:
@@ -1008,6 +1202,7 @@ def _vault_search(arguments: dict) -> str:
         "query": query,
         "n_requested": n,
         "folder_filter": folder,
+        "scope": sc,
         "index_version": "v2" if use_v2 else "v1",
         "embedding_model": VAULT_V2_MODEL if use_v2 else EMBEDDING_MODEL,
         "query_template_version": VAULT_QUERY_TEMPLATE_VERSION if use_v2 else "v1-noprefix",
@@ -1020,22 +1215,35 @@ def _vault_search(arguments: dict) -> str:
         "top_notes": [r.get("note", "") for r in deduped[:5]],
         "latency_ms": int((time.time() - t0) * 1000),
     }
-    try:
-        _vault_logger.info(_safe_json_dumps(log_entry))
-    except Exception:
-        pass  # never let logging break search
+    _log(_vault_logger, log_entry, ctx)
 
+    return {"results": deduped, "graph_linked": graph_suggested[:10],
+            "entities": entities_data, "relations": relations, "scope": sc}
+
+
+def _vault_search(arguments: dict, ctx: dict | None = None) -> str:
+    """vault_search: structured search, rendered as compact Markdown."""
+    query = _clean(arguments["query"])
+    try:
+        out = _vault_search_raw(arguments, ctx)
+    except (NoVaultIndex, ScopeRefused) as e:
+        return str(e)
     return _clean(format_vault_markdown(
-        deduped, query,
-        include_excerpt=include_excerpt,
-        graph_linked=graph_suggested[:10] if graph_suggested else None,
-        entities=entities_data or None,
-        relations=relations or None,
+        out["results"], query,
+        include_excerpt=arguments.get("include_excerpt", False),
+        graph_linked=out["graph_linked"] or None,
+        entities=out["entities"] or None,
+        relations=out["relations"] or None,
     ))
 
 
-def handle_tool_call(name: str, arguments: dict) -> str:
-    """Execute a tool and return the result as text."""
+def handle_tool_call(name: str, arguments: dict, context: dict | None = None) -> str:
+    """Execute a tool and return the result as text.
+
+    `context` says who is asking ({"caller": "mcp"|"chat"|..., "session_id": ...});
+    it only goes into the search logs and never changes the results.
+    """
+    ctx = context or {}
     try:
         # Opened lazily, per tool. The textbook corpus lives in its own tables
         # (CHUNKS_TABLE / PARENTS_TABLE), so an install that indexes only
@@ -1056,8 +1264,14 @@ def handle_tool_call(name: str, arguments: dict) -> str:
                     )
                 table = get_table()
 
+        if name in ("vault_related", "vault_similar"):
+            try:
+                v_scope, v_smap, v_where = resolve_scope(arguments)
+            except ScopeRefused as e:
+                return str(e)
+
         if name == "vault_search":
-            return _vault_search(arguments)
+            return _vault_search(arguments, ctx)
 
         elif name == "vault_related":
             note = arguments["note"]
@@ -1075,6 +1289,8 @@ def handle_tool_call(name: str, arguments: dict) -> str:
                 file_path = meta.get(rn, {}).get("file", "") or rn
                 if exclude_cowork and (_is_cowork_path(file_path) or _is_cowork_path(folder)):
                     continue
+                if not S.folder_in_scope(folder, v_scope, v_smap):
+                    continue
                 related.append({"note": rn, "score": round(sc, 4), "folder": folder})
                 if len(related) >= n:
                     break
@@ -1091,7 +1307,10 @@ def handle_tool_call(name: str, arguments: dict) -> str:
 
             query_embedding = note_rows.iloc[0]["vector"]
             cand = max(n * 3, 40)
-            results_df = table.search(query_embedding).metric("cosine").limit(cand).to_pandas()
+            sb = table.search(query_embedding).metric("cosine").limit(cand)
+            if v_where:
+                sb = sb.where(v_where, prefilter=True)
+            results_df = sb.to_pandas()
             formatted = format_results(results_df, include_excerpt=True)
 
             # Semantic candidates (note -> dict), preserving order, source note dropped
@@ -1110,6 +1329,8 @@ def handle_tool_call(name: str, arguments: dict) -> str:
             adjacency = graph.get("adjacency", {})
             ppr_order = [nn for nn, _ in related_notes(adjacency, note_name, top_k=cand)] \
                 if note_name in adjacency else []
+            ppr_order = [nn for nn in ppr_order
+                         if S.folder_in_scope(_graph_folder(meta, nn), v_scope, v_smap)]
             graph_cosine = _cosine_for_notes(
                 table, query_embedding, [nn for nn in ppr_order if nn not in sem]
             )
@@ -1189,7 +1410,12 @@ def handle_tool_call(name: str, arguments: dict) -> str:
             return _safe_json_dumps(stats, indent=2)
 
         elif name == "textbook_search":
-            return _textbook_search_v2(arguments)
+            return _textbook_search_v2(arguments, ctx)
+
+        elif name == "lecture_search":
+            if not lecture_enabled():
+                return json.dumps({"error": f"lecture index not configured ({LECTURE_DB_PATH} missing)"})
+            return _textbook_search_v2(arguments, ctx, corpus="lecture")
 
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})

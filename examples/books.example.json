@@ -1,0 +1,7 @@
+{
+  "_comment": "Keyed by source folder name (for files under _Guidelines/, the sub-folder). All fields optional; edition/year/corpus_type are inferred from the folder name when absent.",
+  "Handbook_Of_Example_3e_2023": {"tier": 1},
+  "Handbook_Of_Example_2e_2016": {"status": "superseded", "superseded_by": "Handbook_Of_Example_3e_2023"},
+  "Shared_Study_Notes": {"status": "derivative", "corpus_type": "exam"},
+  "Society_Stroke_Guideline_2016": {"corpus_type": "guideline", "status": "superseded", "superseded_by": "Society_Stroke_Guideline_2024"}
+}

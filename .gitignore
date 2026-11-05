@@ -16,6 +16,7 @@ env/
 *.lance/
 lance_db/
 *.jsonl
+!eval/examples/*.jsonl
 *.log
 knowledge_graph.json
 file_hashes.json

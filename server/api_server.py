@@ -43,8 +43,11 @@ from graph_builder import load_graph, get_neighbors
 from mcp_server import (
     find_relations_for_notes, handle_tool_call, fetch_textbook_parents,
     vault_v2_active, _vault_retrieve_v2, get_vault_chunks_table,
+    _vault_search_raw, _textbook_search_v2_raw, lecture_enabled,
+    NoVaultIndex, ScopeRefused, TextbookIndexMissing,
     TOOLS as MCP_TOOLS,
 )
+import books_meta
 from vault_indexer_v2 import VCHUNKS_TABLE
 from textbook_indexer import (
     TEXTBOOK_EMBEDDING_MODEL, TEXTBOOK_QUERY_PREFIX,
@@ -781,12 +784,16 @@ def mcp_tools():
 class McpCallBody(BaseModel):
     name: str
     arguments: dict = {}
+    # Who is calling ({"caller": "mcp", "session_id": ...}); logged, never
+    # changes results. Older thin clients do not send it.
+    context: dict = {}
 
 
 @app.post("/api/mcp/call")
 def mcp_call(body: McpCallBody):
     # handle_tool_call never raises — it returns error JSON as text
-    return {"text": handle_tool_call(body.name, body.arguments)}
+    ctx = {"caller": "mcp", **(body.context or {})}
+    return {"text": handle_tool_call(body.name, body.arguments, ctx)}
 
 
 @app.get("/api/health")
@@ -893,157 +900,81 @@ def _compress_history(history: list[dict], keep_last_n: int = 4) -> list[dict]:
     return compressed + recent_msgs
 
 
-_TEXTBOOK_MD_PATH = TEXTBOOK_PATH if TEXTBOOK_PATH else Path("/nonexistent-textbook-corpus")
+# --- Chat retrieval: the same path the MCP tools use --------------------------
+# The chat context used to run its own retrieval: the v1 `vault` table (frozen
+# since the v2 switch) and a textbook query that read a `page` column the v2
+# schema does not have, so every passage was "page 0" and the expanded context
+# came from the first pages of the file instead of the hit. It now calls the
+# functions behind vault_search / textbook_search / lecture_search, so chat and
+# agents rank identically, the vault scope default applies, and moving to a new
+# index is one change in mcp_server.py.
+CHAT_QUOTAS = {"vault": 3, "textbook": 4, "lecture": 2}
 
 
-def _read_textbook_context(file_rel: str, page_num: int, context_pages: int = 2) -> str:
-    """Read expanded context from textbook md file around the matched page.
+def chat_retrieve(query: str, quotas: dict | None = None, ctx: dict | None = None) -> dict:
+    """Structured results per corpus for a chat question (no Markdown)."""
+    quotas = quotas or CHAT_QUOTAS
+    out: dict[str, list[dict]] = {"vault": [], "textbook": [], "lecture": []}
+    if quotas.get("vault"):
+        try:
+            out["vault"] = _vault_search_raw(
+                {"query": query, "n_results": quotas["vault"], "include_excerpt": True}, ctx
+            )["results"]
+        except (NoVaultIndex, ScopeRefused) as e:
+            logger.warning(f"[chat] vault retrieval refused: {e}")
+    if quotas.get("textbook"):
+        try:
+            out["textbook"] = _textbook_search_v2_raw(
+                {"query": query, "n_results": quotas["textbook"]}, ctx=ctx)
+        except TextbookIndexMissing:
+            pass
+    if quotas.get("lecture") and lecture_enabled():
+        try:
+            out["lecture"] = _textbook_search_v2_raw(
+                {"query": query, "n_results": quotas["lecture"]}, ctx=ctx, corpus="lecture")
+        except TextbookIndexMissing:
+            pass
+    return out
 
-    Returns text from page_num ± context_pages (e.g. pages 3-7 for match on page 5).
-    Falls back to empty string if file not found.
-    """
+
+def _passage_block(icon: str, r: dict) -> str:
+    """One textbook/lecture passage. The header line is a parse contract (eval
+    harness, _extract_note_names); the page line carries the real pages."""
+    sec = r.get("section_path") or r.get("section") or ""
+    head = f"【{icon} {r.get('book', '')} › {r.get('file', '')} › {sec}】(sim={r.get('similarity', 0):.2f})"
+    loc = []
+    ps, pe = r.get("page_start") or 0, r.get("page_end") or 0
+    if ps:
+        loc.append(f"[p.{ps}-{pe}]" if pe and pe != ps else f"[p.{ps}]")
+    prov = books_meta.describe(r.get("meta") or {})
+    if prov:
+        loc.append(f"source: {prov}")
+    body = r.get("parent_text") or r.get("text") or ""
+    return "\n".join([head] + ([" · ".join(loc)] if loc else []) + [body])
+
+
+def format_chat_context(res: dict) -> str:
+    parts = []
+    if res.get("vault"):
+        blocks = [f"【{r['note']} › {r.get('section', '')}】(sim={r.get('similarity', 0):.2f})\n"
+                  f"{r.get('excerpt', '')}" for r in res["vault"]]
+        parts.append("以下是 vault 中與問題相關的筆記內容：\n\n" + "\n\n---\n\n".join(blocks))
+    if res.get("textbook"):
+        parts.append("以下是教科書中與問題相關的內容：\n\n"
+                     + "\n\n---\n\n".join(_passage_block("📖", r) for r in res["textbook"]))
+    if res.get("lecture"):
+        parts.append("以下是演講筆記中與問題相關的內容：\n\n"
+                     + "\n\n---\n\n".join(_passage_block("🎤", r) for r in res["lecture"]))
+    return "\n\n" + "\n\n".join(parts) if parts else ""
+
+
+def _search_vault_context(query: str, n: int = 5, ctx: dict | None = None) -> str:
+    """Context block for the chat prompt. `n` is accepted for the plugin's
+    request field but the per-corpus quotas (CHAT_QUOTAS) decide the size."""
     try:
-        md_path = _TEXTBOOK_MD_PATH / file_rel
-        if not md_path.exists():
-            return ""
-        content = md_path.read_text(encoding="utf-8", errors="replace")
-
-        # Extract pages around the match
-        if "<!-- page " not in content:
-            # No page markers (e.g. epub) — fallback: find the heading section
-            # containing the chunk and return it with neighbors
-            sections = re.split(r'\n(?=#{1,3} )', content)
-            if page_num < len(sections):
-                start = max(0, page_num - 1)
-                end = min(len(sections), page_num + 2)
-                text = "\n\n".join(s.strip() for s in sections[start:end] if s.strip())
-                return text[:6000] if text else ""
-            return ""
-
-        pages = re.split(r'(<!-- page \d+ -->)', content)
-        # Build page_num -> text mapping
-        page_map: dict[int, str] = {}
-        current_page = 0
-        for part in pages:
-            m = re.match(r'<!-- page (\d+) -->', part)
-            if m:
-                current_page = int(m.group(1))
-            elif current_page > 0 and part.strip():
-                page_map[current_page] = part.strip()
-
-        # Collect context_pages before and after
-        target_pages = range(max(1, page_num - context_pages), page_num + context_pages + 1)
-        parts = []
-        for pg in target_pages:
-            if pg in page_map:
-                parts.append(f"[p.{pg}] {page_map[pg]}")
-
-        return "\n\n".join(parts) if parts else ""
-    except Exception:
-        return ""
-
-
-def _search_vault_context(query: str, n: int = 5) -> str:
-    """Search vault AND textbooks, return formatted context for Claude."""
-    try:
-        client = get_ollama()
-        response = client.embed(model=EMBEDDING_MODEL, input=[QUERY_PREFIX + query])
-        query_embedding = response["embeddings"][0]
-
-        # --- Vault search ---
-        results_df = get_table().search(query_embedding).metric("cosine").limit(n * 3).to_pandas()
-
-        formatted = []
-        seen = {}
-        for _, row in results_df.iterrows():
-            note = str(row.get("note", ""))
-            if note in seen:
-                continue
-            seen[note] = True
-            formatted.append({
-                "note": note,
-                "section": str(row.get("section", "")),
-                "folder": str(row.get("folder", "")),
-                "similarity": round(max(0, 1 - float(row.get("_distance", 0))), 4),
-                "mtime": float(row["mtime"]) if row.get("mtime") is not None else None,
-                "doc": str(row.get("text", "")),
-            })
-
-        formatted = rerank(formatted)
-        context_parts = []
-        for r in formatted[:n]:
-            if r["similarity"] < 0.5:
-                continue
-            doc = r["doc"]
-            if len(doc) > 1500:
-                doc = doc[:1500] + "..."
-            context_parts.append(f"【{r['note']} › {r['section']}��(sim={r['similarity']:.2f})\n{doc}")
-
-        vault_ctx = ""
-        if context_parts:
-            vault_ctx = "以下是 vault 中與問題相關的筆記內容���\n\n" + "\n\n---\n\n".join(context_parts)
-
-        # --- Textbook search (with exam boost + book-level dedup) ---
-        # The textbook tables are embedded with TEXTBOOK_EMBEDDING_MODEL, so the
-        # query has to be embedded with that model too. Reusing the vault query
-        # vector here was a silent bug: both models emit 1024 dimensions, so
-        # LanceDB accepted it without error and simply returned worse matches.
-        textbook_ctx = ""
-        tb = get_textbook_table()
-        if tb is not None:
-            tb_client = get_ollama()
-            tb_resp = tb_client.embed(
-                model=TEXTBOOK_EMBEDDING_MODEL,
-                input=[TEXTBOOK_QUERY_PREFIX + query],
-                options={"num_ctx": OLLAMA_NUM_CTX},
-            )
-            tb_qe = tb_resp["embeddings"][0]
-            tb_norm = math.sqrt(sum(v * v for v in tb_qe))
-            if tb_norm > 0:
-                tb_qe = [v / tb_norm for v in tb_qe]
-            tb_n = max(5, n)  # Match vault result count
-            tb_df = tb.search(tb_qe).metric("cosine").limit(tb_n * 5).to_pandas()
-
-            # Apply exam textbook boost + recency boost
-            exam_boost = _load_exam_boost()
-            rows_boosted = []
-            for _, row in tb_df.iterrows():
-                b = str(row.get("book", ""))
-                raw_sim = max(0, 1 - float(row.get("_distance", 0)))
-                boosted = raw_sim + exam_boost.get(b, 0) + _recency_boost(b)
-                rows_boosted.append((row, b, boosted))
-            rows_boosted.sort(key=lambda x: -x[2])
-
-            # Book-level dedup: max 2 chunks per book in chat context
-            book_counts: dict[str, int] = {}
-            tb_parts = []
-            for row, b, sim in rows_boosted:
-                if sim < 0.5:
-                    continue
-                if book_counts.get(b, 0) >= 2:
-                    continue
-                book_counts[b] = book_counts.get(b, 0) + 1
-                section = str(row.get("section", ""))
-                file_name = str(row.get("file", ""))
-                page_num = int(row.get("page", 0))
-
-                # Try to read expanded context from the source md file
-                text = _read_textbook_context(file_name, page_num)
-                if not text:
-                    text = str(row.get("text", ""))
-                if len(text) > 3000:
-                    text = text[:3000] + "..."
-
-                tb_parts.append(f"【📖 {b} › {file_name} › {section}】(sim={sim:.2f})\n{text}")
-                if len(tb_parts) >= tb_n:
-                    break
-            if tb_parts:
-                textbook_ctx = "以下是教科書中與問題相關的內容：\n\n" + "\n\n---\n\n".join(tb_parts)
-
-        # Combine
-        parts = [p for p in [vault_ctx, textbook_ctx] if p]
-        return "\n\n" + "\n\n".join(parts) if parts else ""
-    except Exception:
+        return format_chat_context(chat_retrieve(query, ctx=ctx))
+    except Exception as e:  # chat must still answer when retrieval breaks
+        logger.warning(f"[chat] retrieval failed: {type(e).__name__}: {e}")
         return ""
 
 
@@ -1282,15 +1213,16 @@ async def chat(req: ChatRequest, request: Request):
         active_content = req.active_note["content"]
         rag_query = active_content[:300]
 
+    chat_ctx = {"caller": "chat", "session_id": req.request_id or None}
     if not skip_rag:
         if all_selected:
             vault_context = _get_notes_context(all_selected)
             if req.use_vault_context and not req.selected_notes:
-                rag_context = _search_vault_context(rag_query, req.n_context)
+                rag_context = _search_vault_context(rag_query, req.n_context, chat_ctx)
                 if rag_context:
                     vault_context = vault_context + "\n\n" + rag_context if vault_context else rag_context
         elif req.use_vault_context:
-            vault_context = _search_vault_context(rag_query, req.n_context)
+            vault_context = _search_vault_context(rag_query, req.n_context, chat_ctx)
 
     system_prompt, user_prompt = _build_prompt(req, vault_context, active_note_context)
 
@@ -1468,7 +1400,10 @@ async def cancel_chat(request: Request):
 
 def _extract_note_names(context: str) -> set:
     """Extract note names from vault context string."""
-    return set(re.findall(r"【(.+?) ›", context)) | set(re.findall(r"【(.+?)】", context))
+    names = set(re.findall(r"【(.+?) ›", context)) | {
+        n for n in re.findall(r"【(.+?)】", context) if " › " not in n}
+    # Textbook / lecture passages are not vault notes.
+    return {n for n in names if not n.startswith(("📖", "🎤"))}
 
 
 if __name__ == "__main__":

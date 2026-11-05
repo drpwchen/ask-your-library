@@ -22,9 +22,16 @@ jobs:
       # compileall parses without importing, so this catches typos in files that
       # need lancedb/ollama to actually run.
       - name: Byte-compile all modules
-        run: python -m compileall -q server
+        run: python -m compileall -q server eval
 
       # File-selection tests are plain stdlib and never touch lancedb or ollama,
       # so they run on a machine that has never indexed anything.
       - name: File selection tests
         run: python server/tests/test_file_selection.py
+
+      # Eval harness metrics/parsers and the scope rules are stdlib-only too.
+      - name: Eval harness tests
+        run: python eval/tests/test_eval_metrics.py
+
+      - name: Scope rules (pure part)
+        run: python server/tests/test_scope.py
