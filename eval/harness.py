@@ -100,14 +100,18 @@ def cmd_run(a) -> int:
 
 # --- score -----------------------------------------------------------------------
 
-def score_run(qs: list[dict], run: dict, judgments: list[dict], contaminants: set[str]) -> tuple[list[dict], dict]:
+def score_run(qs: list[dict], run: dict, judgments: list[dict], contaminants: set[str],
+              searched: dict[str, list[str]] | None = None) -> tuple[list[dict], dict]:
+    """`searched` overrides the corpora a question's target is picked from (compare
+    passes the intersection of both runs, so both are scored on the same corpus)."""
     jidx = M.build_judgment_index(judgments)
     rows, lats = [], []
     for q in qs:
         ans = run["answers"].get(q["id"])
         if ans is None:
             continue
-        tgt = target_corpus(q, ans.get("searched", []))
+        srch = searched[q["id"]] if searched and q["id"] in searched else ans.get("searched", [])
+        tgt = target_corpus(q, srch)
         if tgt is None:
             row = {"qid": q["id"], "type": q.get("type", ""), "cluster": q.get("cluster") or q["id"],
                    "zero": True, "n_results": 0, "unjudged_at_hit": 0, "no_corpus": True}
@@ -157,8 +161,18 @@ def cmd_compare(a) -> int:
     qs = load_jsonl(Path(a.set))
     j = load_jsonl(Path(a.judgments)) if a.judgments else []
     c = _load_contaminants(a.contaminants)
-    ra, _ = score_run(qs, json.loads(Path(a.a).read_text(encoding="utf-8")), j, c)
-    rb, _ = score_run(qs, json.loads(Path(a.b).read_text(encoding="utf-8")), j, c)
+    run_a = json.loads(Path(a.a).read_text(encoding="utf-8"))
+    run_b = json.loads(Path(a.b).read_text(encoding="utf-8"))
+    # Score both runs on a corpus both searched: a run that also searches a new corpus
+    # would otherwise be scored on that corpus while the other run is scored on another.
+    both = {}
+    for qid, ans_a in run_a["answers"].items():
+        ans_b = run_b["answers"].get(qid)
+        if ans_b is not None:
+            sb = set(ans_b.get("searched", []))
+            both[qid] = [x for x in ans_a.get("searched", []) if x in sb]
+    ra, _ = score_run(qs, run_a, j, c, both)
+    rb, _ = score_run(qs, run_b, j, c, both)
     ia, ib = {r["qid"]: r for r in ra}, {r["qid"]: r for r in rb}
     common = [q for q in ia if q in ib and "hit@3" in ia[q] and "hit@3" in ib[q]]
     res = {"n": len(common)}

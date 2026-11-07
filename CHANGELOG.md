@@ -8,6 +8,22 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.10.1] — 2026-11-08 — Eval harness: isolated judge calls, same-corpus compare
+
+### Fixed
+- **Every judge call loaded the user's hooks and MCP servers.** `eval/llm.py` runs
+  `claude -p` once per question; each run fired the user's Stop and session-start
+  hooks (a notification per call, secret reads that tripped an access monitor) and
+  started every configured MCP server. Judge calls now pass
+  `--settings '{"disableAllHooks": true}'` and `--strict-mcp-config`: the judge only
+  reads a prompt and returns JSON.
+- **`harness.py compare` could score the two runs on different corpora.** A question
+  that accepts several corpora is scored on the first one the run searched; when
+  only run B searched a new corpus (v2.10.0 added `lecture`), A was scored on `vault`
+  and B on `lecture`, and identical top-3 lists showed up as wins and losses.
+  `compare` now picks each question's target from the corpora both runs searched.
+  `score` on a single run is unchanged.
+
 ## [2.10.0] — 2026-11-06 — Chat on the shared search path, search scopes, book table, eval harness
 
 ### Fixed

@@ -18,7 +18,10 @@ NO_TOOLS = "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,Agent,NotebookEdit
 
 def ask(prompt: str, system: str, model: str = DEFAULT_MODEL, timeout: int = 600) -> str:
     cmd = [CLAUDE_CMD, "-p", "--model", model, "--output-format", "json",
-           "--disallowedTools", NO_TOOLS, "--system-prompt", system]
+           "--disallowedTools", NO_TOOLS, "--system-prompt", system,
+           # A judge only reads a prompt and returns JSON: no user hooks (Stop hooks pushed
+           # ntfy per call; session-start hooks read secrets) and no MCP servers.
+           "--settings", '{"disableAllHooks": true}', "--strict-mcp-config"]
     p = subprocess.run(cmd, input=prompt.encode("utf-8"), capture_output=True, timeout=timeout)
     raw = p.stdout.decode("utf-8", errors="replace").strip()
     try:
