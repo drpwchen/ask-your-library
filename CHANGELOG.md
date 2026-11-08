@@ -8,6 +8,21 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.10.2] — 2026-11-09 — Eval e2e: resumable runs, stop on usage limit
+
+### Fixed
+- **An interrupted `eval/e2e.py` run lost every finished question.** Results were
+  written only when the whole batch ended, so a stopped task or a usage limit threw
+  away up to ~150 paid model calls. Each finished question is now appended to
+  `<out>.partial.jsonl`; re-running the same command skips those and continues.
+  The checkpoint records run, model, k and prompt versions and refuses to mix runs
+  with different settings (`--fresh` starts over). It is removed once a run finishes
+  with no errors.
+- **A usage-limit reply was graded as a wrong answer.** `claude -p` returns the limit
+  notice as an ordinary result, so one run recorded 48 of 150 questions as errors.
+  `eval/llm.py` now raises `QuotaExhausted` on that notice; `e2e.py` stops sending
+  new questions, keeps what finished, and exits with code 3.
+
 ## [2.10.1] — 2026-11-08 — Eval harness: isolated judge calls, same-corpus compare
 
 ### Fixed

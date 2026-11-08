@@ -15,6 +15,11 @@ retrieved (saved run, so the retrieval is frozen), then grades it:
     python eval/e2e.py --set gold.jsonl --run runs/mcp.json --out runs/mcp.e2e.json
     python eval/e2e.py --summarize runs/mcp.e2e.json
 
+Each finished question is appended to <out>.partial.jsonl as soon as it is done.
+Re-running the same command skips those questions, so a stop (Ctrl-C, killed task,
+usage limit) loses only the questions in flight. A usage-limit reply stops the run
+instead of being graded as a wrong answer. --fresh discards the checkpoint.
+
 Answer and grade prompts are fixed in this file; changing either makes runs
 incomparable, so both carry a version string that is written into the output.
 """
@@ -26,7 +31,8 @@ import json
 import sys
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -149,6 +155,7 @@ def main(argv=None) -> int:
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--summarize", metavar="E2E_JSON")
+    ap.add_argument("--fresh", action="store_true", help="ignore and overwrite <out>.partial.jsonl")
     a = ap.parse_args(argv)
 
     if a.summarize:
@@ -160,21 +167,90 @@ def main(argv=None) -> int:
     if a.limit:
         qs = qs[: a.limit]
     run = json.loads(Path(a.run).read_text(encoding="utf-8"))
-    rows = []
+    header = {"run": a.run, "model": a.model, "k": a.k,
+              "answer_version": ANSWER_VERSION, "grade_version": GRADE_VERSION}
+    ckpt = Path(a.out + ".partial.jsonl")
+    done = load_checkpoint(ckpt, header) if not a.fresh else {}
+    if a.fresh or not ckpt.exists():
+        ckpt.write_text(json.dumps({"header": header}, ensure_ascii=False) + "\n", encoding="utf-8")
+    todo = [q for q in qs if q["id"] in run["answers"] and q["id"] not in done]
+    print(f"checkpoint: {len(done)} done, {len(todo)} to run", file=sys.stderr)
+
+    lock = threading.Lock()
+    stop = threading.Event()
+    failed = {}
+    quota_msg = []
+
+    def work(q):
+        if stop.is_set():
+            return None
+        try:
+            return run_one(q, run["answers"][q["id"]], a.k, a.model)
+        except llm.QuotaExhausted:
+            stop.set()  # here, not in the collecting loop: idle workers check it next
+            raise
+
     with ThreadPoolExecutor(max_workers=a.workers) as ex:
-        futs = {ex.submit(run_one, q, run["answers"][q["id"]], a.k, a.model): q["id"]
-                for q in qs if q["id"] in run["answers"]}
-        for f in futs:
+        futs = {ex.submit(work, q): q["id"] for q in todo}
+        for f in as_completed(futs):
+            qid = futs[f]
             try:
-                rows.append(f.result())
+                row = f.result()
+            except llm.QuotaExhausted as e:
+                if not quota_msg:
+                    quota_msg.append(str(e))
+                    print(f"usage limit hit, stopping: {e}", file=sys.stderr)
+                continue
             except Exception as e:
-                rows.append({"qid": futs[f], "error": f"{type(e).__name__}: {e}"})
+                failed[qid] = {"qid": qid, "error": f"{type(e).__name__}: {e}"}
+                continue
+            if row is None:
+                continue
+            done[qid] = row
+            with lock, ckpt.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    if stop.is_set():
+        left = len([q for q in qs if q["id"] in run["answers"] and q["id"] not in done])
+        print(f"stopped on usage limit: {len(done)} saved in {ckpt}, {left} left; "
+              "re-run the same command to continue", file=sys.stderr)
+        return 3
+    order = {q["id"]: i for i, q in enumerate(qs)}
+    rows = sorted(list(done.values()) + list(failed.values()),
+                  key=lambda r: order.get(r["qid"], 10**9))
     out = {"run": a.run, "label": run.get("label"), "model": a.model, "k": a.k,
            "answer_version": ANSWER_VERSION, "grade_version": GRADE_VERSION,
            "rows": rows, "summary": summarize([r for r in rows if "grade" in r])}
     Path(a.out).write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps(out["summary"]["all"], ensure_ascii=False))
+    if failed:
+        print(f"{len(failed)} questions errored; they are not in the checkpoint, so re-running "
+              "the same command retries only those", file=sys.stderr)
+    else:
+        ckpt.unlink()
     return 0
+
+
+def load_checkpoint(path: Path, header: dict) -> dict:
+    """Finished rows from an earlier interrupted run with the same settings."""
+    if not path.exists():
+        return {}
+    lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    if not lines:
+        return {}
+    first = json.loads(lines[0])
+    if first.get("header") != header:
+        raise SystemExit(f"{path} was written with different settings "
+                         f"({first.get('header')}); use --fresh or another --out")
+    done = {}
+    for ln in lines[1:]:
+        try:
+            r = json.loads(ln)
+        except json.JSONDecodeError:  # a line cut off by a hard kill
+            continue
+        if "grade" in r:
+            done[r["qid"]] = r
+    return done
 
 
 if __name__ == "__main__":

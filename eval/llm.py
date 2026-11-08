@@ -25,11 +25,27 @@ def ask(prompt: str, system: str, model: str = DEFAULT_MODEL, timeout: int = 600
     p = subprocess.run(cmd, input=prompt.encode("utf-8"), capture_output=True, timeout=timeout)
     raw = p.stdout.decode("utf-8", errors="replace").strip()
     try:
-        return json.loads(raw).get("result") or ""
+        out = json.loads(raw).get("result") or ""
     except json.JSONDecodeError:
         if p.returncode != 0:
             raise RuntimeError(p.stderr.decode("utf-8", errors="replace")[-500:])
-        return raw
+        out = raw
+    check_quota(out)
+    return out
+
+
+class QuotaExhausted(RuntimeError):
+    """The CLI answered with a usage-limit notice instead of a model reply."""
+
+
+_QUOTA_RE = re.compile(r"hit your [\w-]+ limit|usage limit reached", re.I)
+
+
+def check_quota(text: str) -> None:
+    # A limit notice comes back as an ordinary result string; treating it as an answer
+    # would grade it (and every later question) as a failure.
+    if len(text) < 300 and _QUOTA_RE.search(text):
+        raise QuotaExhausted(text.strip())
 
 
 def ask_json(prompt: str, system: str, model: str = DEFAULT_MODEL, retries: int = 1):
