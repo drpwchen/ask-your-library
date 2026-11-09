@@ -199,7 +199,7 @@ cd server && python textbook_indexer.py
 
 **書目表。** `books.json`（`VAULT_SEARCH_BOOKS_META`，範例見 `examples/books.example.json`）在查詢時併到教科書結果上：標成 `superseded`／`derivative` 的來源預設不出現（傳 `include_superseded` 才看得到）；`corpus_type` 可只搜指引；相似度打平時依 tier、年份排序。不必重建索引。
 
-**演講語料。** 用同一支 indexer 把第二份語料建進另一個 DB（換 `VAULT_SEARCH_DB_PATH`），再把 `VAULT_SEARCH_LECTURE_DB_PATH` 指過去，就會多一個 `lecture_search` 工具，與 `textbook_search` 分開排名。
+**演講語料。** 用同一支 indexer 把第二份語料建進另一個 DB（換 `VAULT_SEARCH_DB_PATH`），再把 `VAULT_SEARCH_LECTURE_DB_PATH` 指過去，就會多一個 `lecture_search` 工具，與 `textbook_search` 分開排名。每門課資料夾的 `_meta.md` 不會出現在結果裡；每筆結果帶 `date`、`speaker`、`course_title`，從該條目的 `Source:` 行解析（`Source: 2025-02-15 講者《課名》· …`），讀不出來的欄位留空，不猜。
 </details>
 
 <details>

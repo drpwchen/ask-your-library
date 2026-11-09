@@ -199,7 +199,7 @@ Adds a `textbook_search` tool (MCP + HTTP). Optionally rank trusted sources high
 
 **Book table.** A `books.json` (`VAULT_SEARCH_BOOKS_META`, see `examples/books.example.json`) is joined onto textbook results at query time: sources marked `superseded` or `derivative` are hidden unless you pass `include_superseded`, `corpus_type` restricts a search to e.g. guidelines, and tier/year break similarity ties. No reindex needed.
 
-**Lecture corpus.** Index a second reference corpus into its own DB (same indexer, different `VAULT_SEARCH_DB_PATH`) and point `VAULT_SEARCH_LECTURE_DB_PATH` at it: a `lecture_search` tool appears, ranked separately from `textbook_search`.
+**Lecture corpus.** Index a second reference corpus into its own DB (same indexer, different `VAULT_SEARCH_DB_PATH`) and point `VAULT_SEARCH_LECTURE_DB_PATH` at it: a `lecture_search` tool appears, ranked separately from `textbook_search`. Each course folder's `_meta.md` is left out of the results, and every hit carries the `date`, `speaker` and `course_title` parsed from its entry's `Source:` line (`Source: 2025-02-15 Speaker《Course title》· …`); a field that cannot be read is empty, never guessed.
 </details>
 
 <details>

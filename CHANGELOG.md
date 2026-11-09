@@ -8,6 +8,20 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [Unreleased]
+
+### Changed
+- **`lecture_search` no longer returns a course's `_meta.md`.** That file is the
+  course's bookkeeping (clip table, material paths, speaker list), not lecture
+  content, yet it made up about one chunk in eleven of a real lecture index. It is
+  now excluded with a prefilter, so it does not use up result slots.
+
+### Added
+- **`lecture_search` results carry `date`, `speaker` and `course_title`**, parsed
+  from the entry's `Source:` line (read from the entry's H1 parent, one query per
+  search) and shown as a `source:` line in the tool output and the chat context.
+  Fields the line does not state (`講者未載明`, no date) are returned empty.
+
 ## [2.10.2] — 2026-11-09 — Eval e2e: resumable runs, stop on usage limit
 
 ### Fixed

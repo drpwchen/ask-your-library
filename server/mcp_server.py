@@ -97,6 +97,7 @@ from config import (
 )
 import scope as S
 import books_meta
+import lecture_meta
 
 def _is_cowork_path(s: str) -> bool:
     """Check if a book name, folder, or file path matches cowork exclusion patterns."""
@@ -512,7 +513,7 @@ def format_textbook_markdown(results: list[dict], query: str, header: str = "tex
         head += " · " + " · ".join(loc)
         lines.append(head)
         lines.append(f"   ({r.get('file','')})")
-        prov = books_meta.describe(r.get("meta") or {})
+        prov = books_meta.describe(r.get("meta") or {}) or lecture_meta.describe(r)
         if prov:
             lines.append(f"   source: {prov}")
         ptext = r.get("parent_text") or r.get("text") or ""
@@ -781,6 +782,9 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
     where = S.combine(
         f"book = '{_escape_sql(book_filter)}'" if book_filter else None,
         books_meta.prefilter(corpus_type, meta) if corpus == "textbook" else None,
+        # A course's _meta.md is bookkeeping (clip table, material paths), not
+        # lecture content: never a lecture_search hit.
+        lecture_meta.META_EXCLUDE_WHERE if corpus == "lecture" else None,
     )
     if where:
         search_builder = search_builder.where(where, prefilter=True)
@@ -927,6 +931,14 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
             "corpus": corpus,
             "meta": r.get("meta", {}),
         })
+
+    # Lecture entries carry speaker / date / course in their `Source:` line,
+    # which sits in the entry's H1 parent rather than in every hit.
+    if corpus == "lecture" and formatted_results:
+        src = lecture_meta.source_by_file(
+            parents_table, [r["file"] for r in formatted_results], _escape_sql)
+        for r in formatted_results:
+            r.update(src.get(r["file"], {"date": "", "speaker": "", "course_title": "", "source_line": ""}))
 
     # Compute observability metrics
     latency_ms = int((time.time() - t0) * 1000)
