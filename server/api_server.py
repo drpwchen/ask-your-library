@@ -48,6 +48,7 @@ from mcp_server import (
     TOOLS as MCP_TOOLS,
 )
 import books_meta
+import lecture_meta
 from vault_indexer_v2 import VCHUNKS_TABLE
 from textbook_indexer import (
     TEXTBOOK_EMBEDDING_MODEL, TEXTBOOK_QUERY_PREFIX,
@@ -946,7 +947,7 @@ def _passage_block(icon: str, r: dict) -> str:
     ps, pe = r.get("page_start") or 0, r.get("page_end") or 0
     if ps:
         loc.append(f"[p.{ps}-{pe}]" if pe and pe != ps else f"[p.{ps}]")
-    prov = books_meta.describe(r.get("meta") or {})
+    prov = books_meta.describe(r.get("meta") or {}) or lecture_meta.describe(r)
     if prov:
         loc.append(f"source: {prov}")
     body = r.get("parent_text") or r.get("text") or ""
