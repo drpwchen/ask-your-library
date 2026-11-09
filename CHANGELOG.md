@@ -8,6 +8,65 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.11.0] — 2026-11-09 — v3 textbook index with real provenance; table units; hybrid search switch
+
+Nothing in an existing index changes until you build a new one: the v3 indexer
+writes only to a database you name, and the default vault profile is untouched.
+The query-side changes read a v2 index as before.
+
+### Added
+- **`server/textbook_indexer_v3.py`** builds a new textbook index (`--corpus`, `--db`;
+  the configured live database is refused):
+  - **Pages per chunk, not per file.** Every chunk records the physical PDF pages of
+    its own lines (`pdf_page_start/end`), the printed page labels when the book's
+    `_manifest.json` has them (`printed_page_start/end`, `page_confidence` =
+    `printed` | `pdf_only`), character offsets into the source markdown, the source
+    file's sha256, `chapter_id` / `chapter_number`, and edition / year / tier /
+    status / corpus_type from `books.json`. On a test book 34 of 35 chunks now span
+    one page; before, a chunk inherited its whole chapter's range.
+  - **Tables are their own passages.** A table is never cut at a page marker or at
+    the chunk length limit; one longer than the embedder's context embeds its
+    caption, header and first rows, and the search still returns the whole table
+    with its review flag.
+  - **Filtered at index time:** References sections (by manifest kind, heading, or
+    a conservative citation-density test) and download-site watermarks. Sources
+    marked superseded / derivative / low_trust in `books.json` are not indexed.
+  - **One source per guideline**, and per folder either `full_text.md` or its
+    chapter files, never both.
+  - `--book` always re-embeds; a file that became empty loses its rows; `--audit`
+    checks coverage chapter by chapter; `--dry-run` chunks without a GPU;
+    `--holding-report` lists sources to retire (moves nothing).
+  - A non-default `--model` writes its own tables; `indexing_signature` pins the
+    model digest, vector width, document instruction and normalisation.
+  - Resumable: the hash cache under `<db>/_v3_state/` is saved every 10 files.
+  - Builds the native full-text index used by hybrid search.
+- **`vault_indexer_v2.py --profile v3 --db <new db>`**: real YAML frontmatter, no
+  backup copies / template folders / `VAULT_SEARCH_V3_EXCLUDE_FOLDERS`, hard length
+  caps (a note with no blank lines no longer becomes one 50k-token chunk), and a
+  `scope` column. The default profile is unchanged.
+- **`textbook_search`**: optional `query_en` — an English rewrite used by keyword
+  matching. `VAULT_SEARCH_TEXTBOOK_RETRIEVAL` picks `vector` (default) / `hybrid` /
+  `fts`; without a full-text index it falls back to vector and logs why.
+  `VAULT_SEARCH_TEXTBOOK_TABLE_SUFFIX` selects a non-default model's tables.
+- Results carry `page_confidence`, `table_review_flag`, `tier`, `year`, `status`,
+  `corpus_type` (omitted when unknown). On a v2 index the table flag is read from
+  the converter's flag comments.
+
+### Changed
+- **Page labels in `textbook_search` output**: physical pages print as `PDF p.N`;
+  printed pages, when known, print first as `p.N`. A table that needs checking
+  against the PDF says so on its own line. `eval/adapters.py` reads both forms.
+- **Book diversity counts editions as one book** (`Braddom_6e` and `_7e` share the
+  cap) and each guideline as its own source; when the cap leaves fewer than
+  `n_results`, the capped passages are appended back in rank order.
+
+### Fixed
+- **`textbook_indexer.py --book` emptied the book.** It deleted the book's rows and
+  then skipped every file whose hash was unchanged, leaving nothing indexed.
+
+Gold set, tool path, against 2.10.0 on the same v2 index: hit@3 0.921 → 0.936,
+MRR 0.871 → 0.880, contamination@3 0.129 → 0.136 (one question).
+
 ## [2.10.2] — 2026-11-09 — Eval e2e: resumable runs, stop on usage limit
 
 ### Fixed
