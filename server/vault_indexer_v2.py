@@ -29,6 +29,9 @@ Usage:
     python vault_indexer_v2.py                   # full rebuild (drops v2 tables)
     python vault_indexer_v2.py --incremental     # only changed files
     python vault_indexer_v2.py --limit 50        # smoke test on first N files
+    python vault_indexer_v2.py --profile v3 --db ~/.vault-search/lance_db_v3
+                                                 # v3 profile into a NEW database
+                                                 # (see vault_v3.py)
 """
 
 import os
@@ -102,6 +105,7 @@ from config import (
     template_version,
 )
 from gpu_lease_client import GpuLease, acquire_or_exit
+import vault_v3 as V3
 
 # This run's turn at the GPU. Registers under its own name: the vault and
 # textbook indexers are separate jobs and must never queue behind each other.
@@ -122,6 +126,11 @@ READY_MARKER_DIR = DB_PATH  # READY_VAULT.{generation_id} marker lives beside th
 
 VCHUNKS_TABLE = "vault_chunks_v2"
 VPARENTS_TABLE = "vault_parents_v2"
+
+# "v2" (default: what the nightly incremental run of an existing index uses,
+# unchanged) or "v3" (vault_v3.py: YAML frontmatter, exclusions, hard caps,
+# scope column). Set by main(); v3 only ever writes to a database named with --db.
+PROFILE = "v2"
 
 # Name + a hash of the prefix itself, so a log line can never name one template
 # while a different prefix is actually in use. Recorded per row and per search;
@@ -199,9 +208,17 @@ VPARENTS_SCHEMA = pa.schema([
 ])
 
 
+def chunks_schema() -> pa.Schema:
+    return VCHUNKS_SCHEMA.append(pa.field("scope", pa.utf8())) if PROFILE == "v3" else VCHUNKS_SCHEMA
+
+
+def parents_schema() -> pa.Schema:
+    return VPARENTS_SCHEMA.append(pa.field("scope", pa.utf8())) if PROFILE == "v3" else VPARENTS_SCHEMA
+
+
 def _signature_parts() -> list[str]:
     """The settings that actually determine what is stored in the tables."""
-    return [
+    parts = [
         ALGORITHM_VERSION,
         CHUNKING_VERSION,
         EMBEDDING_MODEL,
@@ -212,6 +229,10 @@ def _signature_parts() -> list[str]:
         f"TABLE_MAX={TABLE_HARD_MAX_TOKENS}",
         f"VAULT_MIN_CHILD={VAULT_MIN_CHILD_TOKENS}",
     ]
+    if PROFILE == "v3":
+        parts += ["profile=v3", f"CHILD_HARD={V3.CHILD_HARD_MAX}",
+                  f"PARENT_HARD={V3.PARENT_HARD_MAX}", "frontmatter=yaml"]
+    return parts
 
 
 def compute_indexing_signature() -> str:
@@ -495,8 +516,8 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
                 print(f"  full rebuild: dropped {t}", flush=True)
             except Exception:
                 pass
-    chunks_table = get_or_create_table(db, VCHUNKS_TABLE, VCHUNKS_SCHEMA)
-    parents_table = get_or_create_table(db, VPARENTS_TABLE, VPARENTS_SCHEMA)
+    chunks_table = get_or_create_table(db, VCHUNKS_TABLE, chunks_schema())
+    parents_table = get_or_create_table(db, VPARENTS_TABLE, parents_schema())
 
     sig = compute_indexing_signature()
     print(f"  indexing_signature={sig}", flush=True)
@@ -504,6 +525,16 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
         check_signature(chunks_table, sig)
 
     md_files = collect_md_files(VAULT_PATH)
+    scope_map = {}
+    if PROFILE == "v3":
+        md_files, why = _v3_select(md_files)
+        print(f"  [v3] excluded {sum(why.values())} files: {dict(why)}", flush=True)
+        try:
+            import scope as S
+            from config import SCOPE_MAP_PATH
+            scope_map = S.load_scope_map(SCOPE_MAP_PATH)
+        except Exception as e:
+            print(f"  [v3] scope map unreadable, scope column left empty: {e}", flush=True)
     if limit:
         md_files = md_files[:limit]
     print(f"  found {len(md_files)} md files", flush=True)
@@ -543,7 +574,7 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
                 st["failed"] = True
                 continue
             fm = file_meta.get(rp, {})
-            pending_parent_records.append({
+            rec = {
                 "parent_id": p["parent_id"], "vector": emb, "text": p["text"],
                 "file": p["file"], "note": p["chapter"], "folder": p["book"],
                 "section_path": p["section_path"], "section_path_raw": p["section_path_raw"],
@@ -552,7 +583,10 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
                 "chunking_version": CHUNKING_VERSION, "embedding_model": EMBEDDING_MODEL,
                 "query_template_version": VAULT_QUERY_TEMPLATE_VERSION,
                 "indexing_signature": sig, "mtime": p["mtime"],
-            })
+            }
+            if PROFILE == "v3":
+                rec["scope"] = fm.get("scope", "")
+            pending_parent_records.append(rec)
             st["ok_p"] += 1
             stats["parents"] += 1
         pending_parents.clear()
@@ -577,7 +611,7 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
                 f"{c['file']}|{c['parent_id']}|{c['chunk_idx']}".encode("utf-8")
             ).hexdigest()
             fm = file_meta.get(rp, {})
-            pending_chunk_records.append({
+            rec = {
                 "id": cid, "vector": emb, "text": c["text"],
                 "parent_id": c["parent_id"], "file": c["file"],
                 "note": c["chapter"], "folder": c["book"],
@@ -589,7 +623,10 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
                 "chunking_version": CHUNKING_VERSION, "embedding_model": EMBEDDING_MODEL,
                 "query_template_version": VAULT_QUERY_TEMPLATE_VERSION,
                 "indexing_signature": sig, "mtime": c["mtime"],
-            })
+            }
+            if PROFILE == "v3":
+                rec["scope"] = fm.get("scope", "")
+            pending_chunk_records.append(rec)
             st["ok_c"] += 1
             stats["chunks"] += 1
         pending_children.clear()
@@ -633,16 +670,22 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
             stats["skipped"] += 1
             continue
 
-        meta, body = parse_frontmatter(content)
+        if PROFILE == "v3":
+            meta, body = V3.parse_frontmatter_yaml(content, parse_frontmatter)
+        else:
+            meta, body = parse_frontmatter(content)
         if not body.strip():
             hash_cache[rel_path] = h
             continue
-        tags = meta.get("tags", [])
-        if isinstance(tags, str):
-            tags = [tags]
-        aliases = meta.get("aliases", [])
-        if isinstance(aliases, str):
-            aliases = [aliases]
+        if PROFILE == "v3":
+            tags, aliases = V3.as_list(meta.get("tags")), V3.as_list(meta.get("aliases"))
+        else:
+            tags = meta.get("tags", [])
+            if isinstance(tags, str):
+                tags = [tags]
+            aliases = meta.get("aliases", [])
+            if isinstance(aliases, str):
+                aliases = [aliases]
 
         note = fpath.stem
         folder = get_folder(rel_path)
@@ -650,6 +693,8 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
             parents, children, embed_texts_p = chunk_note(
                 body, folder, rel_path, note, fpath.stat().st_mtime
             )
+            if PROFILE == "v3":
+                parents, children, embed_texts_p = _v3_cap(parents, children)
         except Exception as e:
             print(f"  [SKIP] chunk error {rel_path}: {e}", flush=True)
             continue
@@ -674,6 +719,9 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
             "tags": ", ".join(tags) if tags else "",
             "aliases": ", ".join(aliases) if aliases else "",
         }
+        if PROFILE == "v3":
+            import scope as S
+            file_meta[rel_path]["scope"] = S.scope_of(folder, scope_map)
 
         for p, et in zip(parents, embed_texts_p):
             pending_parents.append((rel_path, p, et))
@@ -751,6 +799,68 @@ def _index_vault_v2(client, incremental: bool, limit: int | None):
         print("  ⚠ dropped chunks — re-run with --incremental once GPU is free.", flush=True)
 
 
+def _v3_select(md_files):
+    from collections import Counter
+    keep, why = [], Counter()
+    extra = V3.extra_excluded_folders()
+    for f in md_files:
+        rel = str(f.relative_to(VAULT_PATH)).replace("\\", "/")
+        reason = V3.excluded(rel, extra)
+        if reason:
+            why[reason] += 1
+        else:
+            keep.append(f)
+    return keep, why
+
+
+def _v3_cap(parents, children):
+    """Hard length caps (vault_v3.py). Children are re-cut from capped parents."""
+    def window(text, n):
+        tk = get_tokenizer()
+        ids = tk.encode(text, add_special_tokens=False)
+        return [tk.decode(ids[i:i + n], skip_special_tokens=True) for i in range(0, len(ids), n)]
+
+    capped = V3.cap_parents(parents, V3.PARENT_HARD_MAX, tok_len, window)
+    if len(capped) != len(parents):
+        children = []
+        for p in capped:
+            children.extend(build_children_for_parent(p))
+        children = [c for c in children if c["token_count"] >= VAULT_MIN_CHILD_TOKENS]
+    by_parent: dict = {}
+    for c in children:
+        by_parent.setdefault(c["parent_id"], []).append(c)
+    children = []
+    for pid, cs in by_parent.items():
+        children.extend(V3.cap_children(cs, V3.CHILD_HARD_MAX, tok_len, window))
+    embed_texts_p = []
+    for p in capped:
+        prefix = f"[{p['book']} — {p['chapter']}"
+        if p["section_path"]:
+            prefix += f" > {p['section_path']}"
+        embed_texts_p.append(prefix + "]\n" + p["text"])
+    return capped, children, embed_texts_p
+
+
+def configure(db: str | None, profile: str) -> None:
+    """Point this run at another database (state files move beside it) and/or
+    the v3 profile. v3 refuses the live database: its rows would mix with v2's."""
+    global DB_PATH, HASH_CACHE_PATH, ERROR_LOG_PATH, READY_MARKER_DIR, PROFILE
+    PROFILE = profile
+    if db:
+        from textbook_indexer_v3 import check_target, live_paths
+        target = Path(db).expanduser()
+        check_target(target, None, live_paths())
+        DB_PATH = target
+        READY_MARKER_DIR = target
+        state = target / "_vault_state"
+        state.mkdir(parents=True, exist_ok=True)
+        HASH_CACHE_PATH = state / "vault_hashes.json"
+        ERROR_LOG_PATH = state / "vault_index_errors.json"
+    elif profile == "v3":
+        raise SystemExit("[refuse] --profile v3 needs --db pointing at a NEW database "
+                         "(e.g. ~/.vault-search/lance_db_v3)")
+
+
 def resolve_file_errors(error_log: dict, rel_path: str, status: str = "fixed") -> int:
     """Mark every open error entry of one file resolved. Returns how many.
 
@@ -800,11 +910,16 @@ def main():
                         "(no GPU, no embedding), then exit")
     p.add_argument("--incremental", action="store_true")
     p.add_argument("--limit", type=int, help="Smoke test: only first N files, no table drop")
+    p.add_argument("--db", help="Write to this database instead of VAULT_SEARCH_DB_PATH "
+                                "(state files go to <db>/_vault_state). The live DB is refused.")
+    p.add_argument("--profile", choices=["v2", "v3"], default="v2",
+                   help="v3 = YAML frontmatter, exclusions, hard caps, scope column (vault_v3.py)")
     p.add_argument("--no-gpu-lease", action="store_true",
                    help="Skip the GPU lease entirely (DANGEROUS: another GPU job can then "
                         "collide with the embedder and silently drop chunks; only for "
                         "machines with no lease script configured)")
     args = p.parse_args()
+    configure(args.db, args.profile)
 
     if args.reconcile_errors:
         log = load_json(ERROR_LOG_PATH)

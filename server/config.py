@@ -217,6 +217,15 @@ TEXTBOOK_ERROR_ARCHIVE = _path("VAULT_SEARCH_TEXTBOOK_ERRORS_ARCHIVE", str(DATA_
 # (edition / year / tier / corpus_type / status / superseded_by). Keyed by the
 # book folder name. See examples/books.example.json and server/books_meta.py.
 BOOKS_META_PATH = _path("VAULT_SEARCH_BOOKS_META", str(DATA_DIR / "books.json"))
+# Retrieval used by textbook_search when the caller does not ask: "vector"
+# (default), "hybrid" (vector + full-text fused with RRF) or "fts". Hybrid and
+# fts need a native full-text index on the chunks table (textbook_indexer_v3.py
+# builds one); without it the search falls back to vector and logs why.
+TEXTBOOK_RETRIEVAL = os.environ.get("VAULT_SEARCH_TEXTBOOK_RETRIEVAL", "vector").strip().lower()
+# Table-name suffix for a textbook index built with a non-default embedding
+# model (textbook_indexer_v3.py --model ...), e.g. "__qwen3_embedding_4b".
+# Set VAULT_SEARCH_TEXTBOOK_MODEL to the same model. Empty = the default tables.
+TEXTBOOK_TABLE_SUFFIX = os.environ.get("VAULT_SEARCH_TEXTBOOK_TABLE_SUFFIX", "").strip()
 
 # --- Lecture corpus (optional, third corpus) --------------------------------
 # A second textbook-format LanceDB (same indexer, same model) holding lecture

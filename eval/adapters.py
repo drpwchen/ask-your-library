@@ -72,6 +72,8 @@ _VAULT_LINE = re.compile(r"^(\d+)\. \[\[(.+?)\]\](?: · (.*))?$")
 _TB_LINE = re.compile(r"^(\d+)\. \*\*(.+?)\*\*(?: · (.*))?$")
 _SIM = re.compile(r"^sim ([0-9.]+|\?)$")
 _PAGES = re.compile(r"^p\.(\d+)(?:-(\d+))?$")
+_PDF_PAGES = re.compile(r"^PDF p\.(\d+)(?:-(\d+))?$")
+_PRINTED = re.compile(r"^p\.\S+$")
 
 
 def parse_vault_markdown(md: str, corpus: str = "vault") -> list[dict]:
@@ -114,13 +116,25 @@ def parse_textbook_markdown(md: str, corpus: str = "textbook") -> list[dict]:
             if meta and _SIM.match(meta[-1]):
                 s = _SIM.match(meta.pop()).group(1)
                 sim = float(s) if s != "?" else None
-            if meta and _PAGES.match(meta[-1]):
+            printed = ""
+            if meta and _PDF_PAGES.match(meta[-1]):
+                # v2.11+: "PDF p.N" is the physical page; an optional "p.x"
+                # before it is the printed page label.
+                pm = _PDF_PAGES.match(meta.pop())
+                ps = int(pm.group(1))
+                pe = int(pm.group(2) or ps)
+                if meta and _PRINTED.match(meta[-1]):
+                    printed = meta.pop()[2:]
+            elif meta and _PAGES.match(meta[-1]):
                 pm = _PAGES.match(meta.pop())
                 ps = int(pm.group(1))
                 pe = int(pm.group(2) or ps)
-            out.append({"corpus": corpus, "rank": int(m.group(1)), "book": m.group(2),
-                        "file": nxt.strip()[1:-1], "section": " · ".join(meta),
-                        "page_start": ps, "page_end": pe, "sim": sim, "text": ""})
+            item = {"corpus": corpus, "rank": int(m.group(1)), "book": m.group(2),
+                    "file": nxt.strip()[1:-1], "section": " · ".join(meta),
+                    "page_start": ps, "page_end": pe, "sim": sim, "text": ""}
+            if printed:
+                item["printed_pages"] = printed
+            out.append(item)
             i += 2
             continue
         if out:

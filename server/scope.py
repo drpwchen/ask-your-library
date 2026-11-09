@@ -112,6 +112,18 @@ def folder_in_scope(folder: str | None, scope: str, smap: dict[str, list[str]]) 
     return folder in smap.get(scope, [])
 
 
+def scope_of(folder: str | None, smap: dict[str, list[str]]) -> str:
+    """The scope a folder belongs to, for writing into an index. The first named
+    scope that lists it; otherwise ``personal`` (fail-closed). '' with no map."""
+    if not smap:
+        return ""
+    folder = folder or ""
+    for name, folders in smap.items():
+        if name != PERSONAL and folder in folders:
+            return name
+    return PERSONAL
+
+
 def _sql_list(values: list[str]) -> str:
     return ", ".join("'" + v.replace("'", "''") + "'" for v in values)
 

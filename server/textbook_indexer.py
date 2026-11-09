@@ -1406,7 +1406,10 @@ def index_textbooks(
                     work_queue.put(("read_error", rel_path, str(e)))
                     continue
                 h = file_hash(content)
-                if (incremental or book_filter) and hash_cache.get(rel_path) == h and not force:
+                # --book has just deleted every row of that book, so a hash hit
+                # must NOT skip the file: that used to leave the book with no
+                # rows at all (post_convert's backfill took exactly this path).
+                if incremental and not book_filter and hash_cache.get(rel_path) == h and not force:
                     work_queue.put(("skip_cached", rel_path))
                     continue
                 book = rel_path.split("/")[0] if "/" in rel_path else "misc"

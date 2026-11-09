@@ -94,9 +94,12 @@ from config import (
     VAULT_V2_FLAG, VAULT_QUERY_PREFIX, VAULT_SEARCH_LOG_PATH,
     SCOPE_MAP_PATH, DEFAULT_SCOPE_ENV,
     LECTURE_DB_PATH, LECTURE_SEARCH_LOG_PATH, BOOKS_META_PATH,
+    TEXTBOOK_RETRIEVAL, TEXTBOOK_TABLE_SUFFIX,
 )
 import scope as S
 import books_meta
+import provenance as PV
+import table_units as TU
 
 def _is_cowork_path(s: str) -> bool:
     """Check if a book name, folder, or file path matches cowork exclusion patterns."""
@@ -243,16 +246,22 @@ def _lecture_db():
 
 
 def get_corpus_tables(corpus: str):
-    """(chunks, parents) for 'textbook' or 'lecture'; (None, None) when absent."""
+    """(chunks, parents) for 'textbook' or 'lecture'; (None, None) when absent.
+
+    The textbook tables carry VAULT_SEARCH_TEXTBOOK_TABLE_SUFFIX when the index
+    was built with a non-default model (textbook_indexer_v3.py --model)."""
+    suffix = ""
     if corpus == "lecture":
         if not lecture_enabled():
             return None, None
         db = _lecture_db()
     else:
         db = open_db()
+        suffix = TEXTBOOK_TABLE_SUFFIX
     names = db.table_names()
-    chunks = db.open_table(CHUNKS_TABLE) if CHUNKS_TABLE in names else None
-    parents = db.open_table(PARENTS_TABLE) if PARENTS_TABLE in names else None
+    cn, pn = CHUNKS_TABLE + suffix, PARENTS_TABLE + suffix
+    chunks = db.open_table(cn) if cn in names else None
+    parents = db.open_table(pn) if pn in names else None
     return chunks, parents
 
 
@@ -502,8 +511,12 @@ def format_textbook_markdown(results: list[dict], query: str, header: str = "tex
     for i, r in enumerate(results, 1):
         loc = []
         ps, pe = r.get("page_start", 0), r.get("page_end", 0)
+        pps, ppe = r.get("printed_page_start"), r.get("printed_page_end")
+        if pps:
+            # Cite the printed page; the PDF page follows so the passage can be found.
+            loc.append(f"p.{pps}-{ppe}" if ppe and ppe != pps else f"p.{pps}")
         if ps:
-            loc.append(f"p.{ps}-{pe}" if pe and pe != ps else f"p.{ps}")
+            loc.append(f"PDF p.{ps}-{pe}" if pe and pe != ps else f"PDF p.{ps}")
         loc.append(f"sim {_fmt_sim(r.get('similarity'))}")
         sec = r.get("section") or r.get("section_path") or ""
         head = f"{i}. **{r.get('book','')}**"
@@ -515,6 +528,11 @@ def format_textbook_markdown(results: list[dict], query: str, header: str = "tex
         prov = books_meta.describe(r.get("meta") or {})
         if prov:
             lines.append(f"   source: {prov}")
+        flag = r.get("table_review_flag")
+        if flag == TU.REVIEW:
+            lines.append("   ⚠️ table needs checking against the PDF page before any value is cited")
+        elif flag == TU.UNVERIFIED:
+            lines.append("   ⚠️ table structure unverified")
         ptext = r.get("parent_text") or r.get("text") or ""
         if ptext:
             lines.append(ptext)
@@ -665,6 +683,10 @@ TOOLS = [
                     "type": "boolean",
                     "description": "When false (default), sources marked superseded or derivative in the book table are hidden. Set true to compare an old edition against its replacement.",
                     "default": False
+                },
+                "query_en": {
+                    "type": "string",
+                    "description": "Optional: the query rewritten in English with the exact drug names, units and abbreviations you expect the source to use. The reference corpus is English: keyword matching uses this instead of `query` when the server runs hybrid search. Give it for Chinese or mixed queries."
                 }
             },
             "required": ["query"]
@@ -703,6 +725,101 @@ def _row_similarity(row) -> float:
     if d != d:  # NaN
         return 0.0
     return round(max(0.0, 1.0 - d), 4)
+
+
+# v3 index columns copied onto a result when the row has them (see
+# textbook_indexer_v3.py). A v2 index has none of them; nothing breaks.
+V3_RESULT_FIELDS = (
+    "source", "lineage", "chapter_id", "chapter_number", "section_kind",
+    "pdf_page_start", "pdf_page_end", "printed_page_start", "printed_page_end",
+    "page_confidence", "char_start", "char_end", "table_id", "table_review_flag",
+    "edition", "year", "tier", "status", "corpus_type", "source_hash", "split_method",
+)
+_INT_FIELDS = {"chapter_number", "pdf_page_start", "pdf_page_end", "char_start", "char_end",
+               "year", "tier"}
+
+
+def _opt(row, key):
+    """A row value, or None when the column is missing, null, NaN or ''."""
+    try:
+        v = row.get(key)
+    except Exception:
+        return None
+    if v is None:
+        return None
+    try:
+        if v != v:  # NaN
+            return None
+    except Exception:
+        pass
+    if isinstance(v, str):
+        v = _clean(v)
+        return v or None
+    if key in _INT_FIELDS:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+    return v
+
+
+def _index_meta_fallback(results: list[dict]) -> None:
+    """books.json (query time) wins; columns written at index time fill gaps."""
+    for r in results:
+        m = r.setdefault("meta", {})
+        for k in ("edition", "year", "tier", "corpus_type", "status"):
+            if r.get(k) is not None and not m.get(k):
+                m[k] = r[k]
+
+
+def _strip_heading_prefix(text: str) -> str:
+    """Drop the '[book — chapter > section]' line every stored child opens with."""
+    if text.startswith("[") and "\n" in text:
+        first, rest = text.split("\n", 1)
+        if first.endswith("]"):
+            return rest
+    return text
+
+
+def _table_flag_from_text(*texts: str) -> str | None:
+    for t in texts:
+        if t and TU.REVIEW_RE.search(t):
+            return TU.REVIEW
+    for t in texts:
+        if t and TU.UNVERIFIED_RE.search(t):
+            return TU.UNVERIFIED
+    return None
+
+
+def _provenance_fields(r: dict, parent_text: str) -> dict:
+    """I6 fields for one textbook result. Omitted when unknown, so a consumer
+    can tell "not recorded" from a value."""
+    m = r.get("meta") or {}
+    out = {}
+    for k in ("source", "chapter_id", "chapter_number", "section_kind", "pdf_page_start",
+              "pdf_page_end", "printed_page_start", "printed_page_end", "char_start",
+              "char_end", "table_id", "source_hash", "split_method"):
+        if r.get(k) is not None:
+            out[k] = r[k]
+    if r.get("id"):
+        out["chunk_id"] = r["id"]
+    # A v2 row's pages are physical PDF pages too, just not narrowed to the chunk.
+    out["page_confidence"] = r.get("page_confidence") or PV.PDF_ONLY
+    if "table_review_flag" in r:
+        flag = r["table_review_flag"]
+    else:
+        # v2 index: the converter's flag comments are in the stored text.
+        texts = [r.get("text", "")]
+        if r.get("chunk_kind") in ("table", "table_fragment"):
+            texts.append(parent_text)
+        flag = _table_flag_from_text(*texts)
+    if flag:
+        out["table_review_flag"] = flag
+    for k in ("tier", "year", "status", "corpus_type", "edition"):
+        v = m.get(k) if m.get(k) not in (None, "") else r.get(k)
+        if v not in (None, ""):
+            out[k] = v
+    return out
 
 
 class TextbookIndexMissing(RuntimeError):
@@ -762,34 +879,52 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
 
     # Fetch n*10 to give dedup room (Gemini r5 #3)
     fetch_limit = n * 10
-    # `retrieval` is an EXPERIMENT switch for the eval harness, not part of the
-    # tool schema: "vector" (default, what the tool does), "fts" (keyword only)
-    # or "hybrid" (vector + FTS fused by RRF). The non-vector modes need a
-    # native FTS index on the chunks table's `text` column.
-    retrieval = arguments.get("retrieval", "vector")
+    # Retrieval mode: "vector", "hybrid" (vector + FTS fused by RRF) or "fts".
+    # The server default comes from VAULT_SEARCH_TEXTBOOK_RETRIEVAL (textbook
+    # only); a caller's `retrieval` argument overrides it (the eval harness uses
+    # that). Non-vector modes need a native FTS index on the chunks `text`
+    # column; without one the search falls back to vector and logs the reason.
+    retrieval = str(arguments.get("retrieval")
+                    or (TEXTBOOK_RETRIEVAL if corpus == "textbook" else "vector")).lower()
+    if retrieval not in ("vector", "hybrid", "fts"):
+        retrieval = "vector"
+    # The keyword side matches the corpus language: an English rewrite of the
+    # query (`query_en`) beats a Chinese query against English books.
     fts_text = arguments.get("query_en") or query
-    if retrieval == "fts":
-        search_builder = chunks_table.search(fts_text, query_type="fts").limit(fetch_limit)
-    elif retrieval == "hybrid":
-        from lancedb.rerankers import RRFReranker
-        search_builder = (chunks_table.search(query_type="hybrid")
-                          .vector(query_embedding).text(fts_text)
-                          .distance_type("cosine")
-                          .rerank(RRFReranker()).limit(fetch_limit))
-    else:
-        search_builder = chunks_table.search(query_embedding).metric("cosine").limit(fetch_limit)
     where = S.combine(
         f"book = '{_escape_sql(book_filter)}'" if book_filter else None,
         books_meta.prefilter(corpus_type, meta) if corpus == "textbook" else None,
     )
-    if where:
-        search_builder = search_builder.where(where, prefilter=True)
-    df = search_builder.to_pandas()
+
+    def _search(mode: str):
+        if mode == "fts":
+            sb = chunks_table.search(fts_text, query_type="fts").limit(fetch_limit)
+        elif mode == "hybrid":
+            from lancedb.rerankers import RRFReranker
+            sb = (chunks_table.search(query_type="hybrid")
+                  .vector(query_embedding).text(fts_text)
+                  .distance_type("cosine")
+                  .rerank(RRFReranker()).limit(fetch_limit))
+        else:
+            sb = chunks_table.search(query_embedding).metric("cosine").limit(fetch_limit)
+        if where:
+            sb = sb.where(where, prefilter=True)
+        return sb.to_pandas()
+
+    retrieval_fallback = None
+    try:
+        df = _search(retrieval)
+    except Exception as e:  # noqa: BLE001 -- e.g. no FTS index on this table
+        if retrieval == "vector":
+            raise
+        retrieval_fallback = f"{retrieval}: {type(e).__name__}: {str(e)[:160]}"
+        retrieval = "vector"
+        df = _search("vector")
 
     # Score: cosine similarity = 1 - distance (since vectors L2-normalized)
     raw_results = []
     for _, row in df.iterrows():
-        raw_results.append({
+        rec = {
             "id": _clean(str(row.get("id", ""))),
             "parent_id": _clean(str(row.get("parent_id", ""))),
             "file": _clean(str(row.get("file", ""))),
@@ -807,7 +942,13 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
             "has_figure_ref": bool(row.get("has_figure_ref", False)),
             "text": _clean(str(row.get("text", ""))),
             "similarity": _row_similarity(row),
-        })
+        }
+        # v3 provenance columns (textbook_indexer_v3.py); absent on a v2 index.
+        for k in V3_RESULT_FIELDS:
+            v = _opt(row, k)
+            if v is not None:
+                rec[k] = v
+        raw_results.append(rec)
 
     # Cowork exclusion (default true) — drop derivative notes before dedup
     if exclude_cowork:
@@ -822,9 +963,16 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
     n_before_meta = len(raw_results)
     if corpus == "textbook":
         books_meta.annotate(raw_results, meta)
+        _index_meta_fallback(raw_results)
         raw_results = [r for r in raw_results if books_meta.visible(r, include_superseded, corpus_type)]
         if retrieval == "vector":  # fused rankings are not ordered by similarity
             raw_results = books_meta.tie_break(raw_results)
+        # The unit a citation names (a guideline's own folder, not "_Guidelines")
+        # and the lineage that ties editions of one book together.
+        for r in raw_results:
+            src = r.get("source") or PV.source_key(r["book"], r["file"])
+            r["source"] = src
+            r["lineage"] = r.get("lineage") or PV.lineage_key(src, meta.get(src))
     hidden_by_meta = n_before_meta - len(raw_results)
 
     # Dedup: max children per parent
@@ -837,19 +985,31 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
         parent_count[pid] = parent_count.get(pid, 0) + 1
         deduped.append(r)
 
-    # Soft book diversity: only enforce max_per_book if >50% from one book
+    # Soft book diversity: only enforce max_per_book if >50% from one book.
+    # Textbook: editions of one book count as one (lineage), each guideline
+    # counts on its own, and when the cap leaves fewer than n results the
+    # capped ones are appended back in rank order instead of returning short.
+    div_key = "lineage" if corpus == "textbook" else "book"
+    diversity_backfilled = 0
     if not book_filter and deduped:
         from collections import Counter
-        bk_counter = Counter(r["book"] for r in deduped)
+        bk_counter = Counter(r.get(div_key) or r["book"] for r in deduped)
         top_book, top_count = bk_counter.most_common(1)[0]
         if top_count / len(deduped) > SOFT_BOOK_DIVERSITY_THRESHOLD:
             book_count: dict[str, int] = {}
             soft_filtered = []
+            capped = []
             for r in deduped:
-                if book_count.get(r["book"], 0) >= DEFAULT_MAX_PER_BOOK:
+                key = r.get(div_key) or r["book"]
+                if book_count.get(key, 0) >= DEFAULT_MAX_PER_BOOK:
+                    capped.append(r)
                     continue
-                book_count[r["book"]] = book_count.get(r["book"], 0) + 1
+                book_count[key] = book_count.get(key, 0) + 1
                 soft_filtered.append(r)
+            if corpus == "textbook" and len(soft_filtered) < n:
+                extra = capped[:n - len(soft_filtered)]
+                diversity_backfilled = len(extra)
+                soft_filtered += extra
             deduped = soft_filtered
 
     deduped = deduped[:n]
@@ -898,10 +1058,16 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
             parent_text_full = str(parent_data.get("text", ""))
             parent_token_count = int(parent_data.get("token_count", 0) or 0)
         budget = budget_per_parent.get(pid, MAX_PARENT_RETURN_TOKENS)
+        if r.get("table_id"):
+            # A table unit (v3) comes back whole, not its surrounding parent:
+            # a dose row without its header is not citable.
+            parent_text_full = _strip_heading_prefix(r["text"])
+            parent_token_count = r["token_count"]
+            budget = max(budget, ABSOLUTE_PARENT_MAX_RETURN_TOKENS)
         truncated_text, was_truncated, returned_tokens = _truncate_text_to_tokens(parent_text_full, budget)
 
         # API surface: keep legacy field 'page' as page_start; add new fields
-        formatted_results.append({
+        out = {
             "file": r["file"],
             "book": r["book"],
             "chapter": r["chapter"],
@@ -926,7 +1092,10 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
             "has_figure_ref": r["has_figure_ref"],
             "corpus": corpus,
             "meta": r.get("meta", {}),
-        })
+        }
+        if corpus == "textbook":
+            out.update(_provenance_fields(r, parent_text_full))
+        formatted_results.append(out)
 
     # Compute observability metrics
     latency_ms = int((time.time() - t0) * 1000)
@@ -970,6 +1139,9 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
         "n_returned": len(formatted_results),
         "corpus_type_filter": corpus_type,
         "retrieval": retrieval,
+        "retrieval_fallback": retrieval_fallback,
+        "query_en": arguments.get("query_en") or None,
+        "diversity_backfilled": diversity_backfilled,
         "hidden_by_books_meta": hidden_by_meta,
     }
     _log(_lecture_logger if corpus == "lecture" else _search_logger, log_entry, ctx)
