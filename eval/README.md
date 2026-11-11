@@ -13,7 +13,7 @@ judgments and runs quote your notes and books — keep them outside the repo
 |---|---|
 | `harness.py` | `run` a question set through a system, `score` a run, `compare` two runs, list `unjudged` results |
 | `adapters.py` | systems: `mcp` (the tool path agents use), `chat` (the context the plugin chat builds), `ripgrep` (pooling only) |
-| `metrics.py` | relevance matching, hit@k / MRR / recall@10 / page-window hit / contamination@3, McNemar, cluster bootstrap |
+| `metrics.py` | relevance matching, hit@k / MRR / recall@10 / page-window hit / contamination@3, McNemar, cluster bootstrap, cluster permutation, Holm |
 | `judge.py` | LLM judgments for pooled results nobody labelled yet |
 | `e2e.py` | answer from the retrieved sources with a fixed prompt, then grade every claim |
 | `examples/synthetic_gold.jsonl` | the question format, with made-up books |
@@ -55,7 +55,7 @@ python eval/harness.py unjudged --set gold.jsonl --run runs/mcp.json runs/chat.j
 python eval/judge.py --set gold.jsonl --unjudged unjudged.jsonl --out judgments.jsonl
 python eval/harness.py score --set gold.jsonl --run runs/mcp.json --judgments judgments.jsonl --contaminants contaminants.json
 
-# paired comparison (McNemar on hit@3, cluster bootstrap on MRR)
+# paired comparison (cluster permutation on hit@3 and MRR; McNemar / bootstrap as context)
 python eval/harness.py compare --set silver.jsonl --a runs/base.json --b runs/fts.json
 
 # claim-level end-to-end from a saved run
@@ -69,6 +69,27 @@ under `--scratch`, never into the live logs.
 
 `contaminants.json`: `{"books": ["Old_Edition_Folder"], "vault_folders": ["Shared Notes"]}` —
 a source in the top 3 from this list counts toward contamination@3.
+
+## Decision rules (fix these before looking at results)
+
+A/B decisions are made on rules written down before the runs, not on whichever
+comparison turns out significant afterwards. The defaults `compare` supports:
+
+- **Primary test: cluster sign-flip permutation** (`perm` in the `compare`
+  output), two-sided, alpha = 0.05. Each cluster's summed difference keeps or
+  flips its sign as a whole. With ~20 clusters the bootstrap percentile p is
+  optimistic, so McNemar (hit@3) and the cluster bootstrap CI (MRR) are
+  reported as context only.
+- **Primary metric: MRR**; hit@3 is secondary. With pooled judging (rel >= 1)
+  hit@3 sits near its ceiling and separates systems poorly.
+- **Several pre-registered contrasts in one decision**: adjust their primary
+  p-values with Holm (`metrics.holm`).
+- **Name the judgment basis** next to every number: gold files only, or gold
+  plus pooled LLM judgments (rel >= 1). A result that holds on one basis and not
+  the other is reported as such.
+- **Run with the `n` the real callers use**: ranking depends on `n` (the
+  candidate pool and the diversity backfill), so a top-5 measured with `--n 50`
+  is not the top-5 a caller asking for 10 sees.
 
 ## Tests
 

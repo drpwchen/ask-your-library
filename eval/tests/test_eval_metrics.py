@@ -126,6 +126,27 @@ def test_parse_chat_context():
     assert r[1]["note"] == "Note B"
     assert (r[3]["page_start"], r[3]["page_end"]) == (3, 5)
 
+def test_cluster_permutation_exact_and_clustered():
+    # 4 clusters all +1: exact two-sided p = 2/16
+    r = M.cluster_permutation_diff([0] * 4, [1] * 4, ["a", "b", "c", "d"])
+    assert r["method"] == "exact" and r["p"] == 0.125 and r["diff"] == 1.0
+    # same 8 improvements packed into 2 clusters are weaker evidence than 8 clusters
+    few = M.cluster_permutation_diff([0] * 8, [1] * 8, ["a"] * 4 + ["b"] * 4)
+    many = M.cluster_permutation_diff([0] * 8, [1] * 8, [str(i) for i in range(8)])
+    assert few["p"] == 0.5 and many["p"] < 0.01
+    # no difference -> p = 1
+    assert M.cluster_permutation_diff([1, 0], [1, 0], ["a", "b"])["p"] == 1.0
+    # >16 clusters -> Monte Carlo, deterministic by seed
+    a, b, c = [0] * 20, [1] * 10 + [0] * 10, [str(i) for i in range(20)]
+    r1, r2 = M.cluster_permutation_diff(a, b, c, n_perm=2000), M.cluster_permutation_diff(a, b, c, n_perm=2000)
+    assert r1 == r2 and r1["method"].startswith("monte_carlo") and r1["p"] < 0.01
+
+
+def test_holm():
+    adj = M.holm({"x": 0.01, "y": 0.04, "z": 0.03})
+    assert adj == {"x": 0.03, "z": 0.06, "y": 0.06}
+
+
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

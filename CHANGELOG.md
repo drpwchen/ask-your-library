@@ -8,6 +8,26 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.11.2] — 2026-11-11 — hybrid search reports real similarity; permutation test in eval
+
+### Fixed
+- **Hybrid and FTS textbook results reported `similarity` 0.0 for every row.**
+  LanceDB's RRF reranker drops `_distance` (it returns `_relevance_score`
+  instead), so `_row_similarity` fell through to 0.0 — 660 of 660 results in a
+  66-question pilot. The cosine is now computed from the row's own vector
+  against the query vector (both L2-normalised), which equals vector search's
+  `1 - _distance`. Ranking is unchanged; only the reported number was wrong.
+  Anything that reads `similarity` (the result display, confidence or "nothing
+  found" logic) now works with `VAULT_SEARCH_TEXTBOOK_RETRIEVAL=hybrid`.
+
+### Added
+- **eval: cluster sign-flip permutation test** (`metrics.cluster_permutation_diff`)
+  on hit@3 and MRR in `harness.py compare` (`perm`), and `metrics.holm` for a
+  family of contrasts. With ~20 clusters the cluster bootstrap's p runs
+  optimistic (0.008 vs 0.022 on the same data).
+- **eval/README.md: "Decision rules"** — primary test, primary metric, alpha,
+  multiple-comparison handling, judgment basis and `n` fixed before the runs.
+
 ## [2.11.1] — 2026-11-09 — lecture_search: course metadata, no _meta.md hits
 
 ### Changed

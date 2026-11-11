@@ -251,3 +251,54 @@ def cluster_bootstrap_diff(a: list[float], b: list[float], clusters: list[str],
     above = sum(1 for s in stats if s >= 0) / n_boot
     return {"diff": round(observed, 4), "ci95": [round(lo, 4), round(hi, 4)],
             "p": round(min(1.0, 2 * min(below, above)), 4), "clusters": len(keys)}
+
+
+def cluster_permutation_diff(a: list[float], b: list[float], clusters: list[str],
+                             n_perm: int = 100_000, seed: int = 20261111) -> dict:
+    """Paired cluster sign-flip permutation test of mean(b - a).
+
+    Under H0 (A and B exchangeable) the sign of each cluster's summed
+    difference is a fair coin; all questions of a cluster flip together.
+    With few clusters (~20) this is the primary test: the cluster bootstrap's
+    percentile p runs optimistic there (I9 pilot: 0.008 vs 0.022). Exact
+    enumeration up to 16 clusters, Monte Carlo above. Works for binary
+    outcomes (hit@3) and continuous ones (MRR) alike.
+    """
+    assert len(a) == len(b) == len(clusters)
+    sums: dict[str, float] = defaultdict(float)
+    for x, y, c in zip(a, b, clusters):
+        sums[c] += y - x
+    v = [d for d in sums.values()]
+    n = len(a)
+    if not n:
+        return {"diff": 0.0, "p": 1.0, "clusters": 0, "method": "none"}
+    obs = abs(sum(v))
+    eps = 1e-12
+    if len(v) <= 16:
+        ge = 0
+        total = 1 << len(v)
+        for mask in range(total):
+            s = sum(-d if (mask >> i) & 1 else d for i, d in enumerate(v))
+            if abs(s) >= obs - eps:
+                ge += 1
+        p, method = ge / total, "exact"
+    else:
+        rng = random.Random(seed)
+        ge = 0
+        for _ in range(n_perm):
+            s = sum(d if rng.random() < 0.5 else -d for d in v)
+            if abs(s) >= obs - eps:
+                ge += 1
+        p, method = (ge + 1) / (n_perm + 1), f"monte_carlo_{n_perm}"
+    return {"diff": round(sum(v) / n, 4), "p": round(min(1.0, p), 4),
+            "clusters": len(v), "method": method}
+
+
+def holm(pvals: dict[str, float]) -> dict[str, float]:
+    """Holm-Bonferroni adjusted p-values for a pre-registered family of tests."""
+    items = sorted(pvals.items(), key=lambda kv: kv[1])
+    m, out, running = len(items), {}, 0.0
+    for i, (k, p) in enumerate(items):
+        running = max(running, min(1.0, (m - i) * p))
+        out[k] = round(running, 4)
+    return out

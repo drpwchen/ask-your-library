@@ -715,17 +715,33 @@ if lecture_enabled():
     TOOLS.append(LECTURE_TOOL)
 
 
-def _row_similarity(row) -> float:
-    """Cosine similarity from `_distance`; 0.0 for keyword-only rows (FTS/hybrid
-    hits the vector side never scored carry no distance, or NaN)."""
+def _row_similarity(row, query_vec=None) -> float:
+    """Cosine similarity of a result row to the query.
+
+    Vector search gives it as 1 - `_distance`. Hybrid (RRF) and FTS rows carry
+    no `_distance` -- RRF replaces it with `_relevance_score` -- so the cosine
+    is computed from the row's own `vector` against the query vector (both
+    L2-normalised, so the dot product is the cosine). 0.0 only when neither is
+    available."""
     d = row.get("_distance")
     try:
         d = float(d)
     except (TypeError, ValueError):
+        d = float("nan")
+    if d == d:  # not NaN
+        return round(max(0.0, 1.0 - d), 4)
+    v = row.get("vector")
+    if query_vec is None or v is None:
         return 0.0
-    if d != d:  # NaN
+    try:
+        if len(v) != len(query_vec):
+            return 0.0
+        dot = sum(float(a) * float(b) for a, b in zip(v, query_vec))
+    except (TypeError, ValueError):
         return 0.0
-    return round(max(0.0, 1.0 - d), 4)
+    if dot != dot:
+        return 0.0
+    return round(max(0.0, dot), 4)
 
 
 # v3 index columns copied onto a result when the row has them (see
@@ -945,7 +961,7 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
             "figure_ids": [_clean(str(s)) for s in (row.get("figure_ids") if row.get("figure_ids") is not None else [])],
             "has_figure_ref": bool(row.get("has_figure_ref", False)),
             "text": _clean(str(row.get("text", ""))),
-            "similarity": _row_similarity(row),
+            "similarity": _row_similarity(row, query_embedding),
         }
         # v3 provenance columns (textbook_indexer_v3.py); absent on a v2 index.
         for k in V3_RESULT_FIELDS:

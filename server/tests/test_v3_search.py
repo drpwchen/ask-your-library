@@ -174,3 +174,33 @@ def test_fts_uses_query_en(db):
 def test_query_en_in_tool_schema():
     tb = next(t for t in mcp_server.TOOLS if t["name"] == "textbook_search")
     assert "query_en" in tb["inputSchema"]["properties"]
+
+
+def test_hybrid_and_fts_report_real_cosine(db):
+    """RRF/FTS rows have no `_distance`; similarity must still be the cosine to
+    the query (I9 pilot found 660/660 hybrid results at 0.0)."""
+    rows = [v2_row(1, "B", "B/a.md", "[B]\nbaclofen intrathecal pump", vec(0, 1, 0.5), parent="pa"),
+            v2_row(2, "B", "B/b.md", "[B]\ndantrolene sodium dose", vec(2), parent="pb")]
+    t = db.create_table("textbook_chunks", data=rows)
+    t.create_fts_index("text", use_tantivy=False, replace=True)
+    db.create_table("textbook_parents", data=parent_rows(["pa", "pb"]))
+    expected = {"B/a.md": round(1 / (1.25 ** 0.5), 4), "B/b.md": 0.0}
+    vec_res = {r["file"]: r["similarity"] for r in search(retrieval="vector", n_results=3)}
+    for mode in ("hybrid", "fts"):
+        res = search(query="q", query_en="baclofen dantrolene", retrieval=mode, n_results=3)
+        assert res
+        for r in res:
+            assert r["similarity"] == pytest.approx(expected[r["file"]], abs=1e-3), (mode, r["file"])
+            if r["file"] in vec_res:
+                assert r["similarity"] == pytest.approx(vec_res[r["file"]], abs=1e-3)
+    assert any(r["similarity"] > 0 for r in search(query_en="baclofen", retrieval="hybrid", n_results=3))
+
+
+def test_row_similarity_fallbacks():
+    rs = mcp_server._row_similarity
+    assert rs({"_distance": 0.25}) == 0.75
+    assert rs({"_distance": float("nan"), "vector": [1.0, 0.0]}, [1.0, 0.0]) == 1.0
+    assert rs({"vector": [0.6, 0.8]}, [1.0, 0.0]) == 0.6
+    assert rs({"vector": [0.6, 0.8]}) == 0.0            # no query vector
+    assert rs({"vector": [1.0]}, [1.0, 0.0]) == 0.0      # width mismatch
+    assert rs({}, [1.0]) == 0.0

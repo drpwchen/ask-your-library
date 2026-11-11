@@ -181,6 +181,13 @@ def cmd_compare(a) -> int:
     res["hit@3"]["b"] = round(sum(ib[q]["hit@3"] for q in common) / max(1, len(common)), 4)
     res["mrr"] = M.cluster_bootstrap_diff([ia[q]["mrr"] for q in common], [ib[q]["mrr"] for q in common],
                                           [ia[q]["cluster"] for q in common])
+    # Primary test (pre-registered 2026-11-11, see eval/README.md "Decision rules"):
+    # cluster sign-flip permutation on both metrics; McNemar / bootstrap stay as context.
+    cl = [ia[q]["cluster"] for q in common]
+    res["hit@3"]["perm"] = M.cluster_permutation_diff([ia[q]["hit@3"] for q in common],
+                                                      [ib[q]["hit@3"] for q in common], cl)
+    res["mrr"]["perm"] = M.cluster_permutation_diff([ia[q]["mrr"] for q in common],
+                                                    [ib[q]["mrr"] for q in common], cl)
     print(json.dumps(res, ensure_ascii=False, indent=1))
     return 0
 
