@@ -8,6 +8,19 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.12.3] — 2026-11-12 — nightly smoke check
+
+### Added
+- **`eval/smoke.py`**: a few fixed queries against the running server. Each
+  tool must answer with its expected source, and `textbook_search` must have
+  used hybrid retrieval and the reranker (read back from the server's search
+  log). A reranker skipped only because another job holds the GPU is retried
+  once, then reported as a warning. Exit 1 on any failure, so a scheduler can
+  alert on it. Queries live in a private JSON file; the format is in the
+  module docstring. This replaces the planned weekly 60-question regression:
+  retrieval only changes when code, model or index change, and the full eval
+  runs before each release.
+
 ## [2.12.2] — 2026-11-12 — textbook_search names its corpus root and source precedence
 
 ### Added
