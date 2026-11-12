@@ -86,7 +86,7 @@ Obsidian 內建搜尋是字面比對——它找你打的字。但你幾個月�
 - **`ppr.py`** 用 **Personalized PageRank** 在 `[[wiki-link]]` 圖上排序筆記——HippoRAG / LinearRAG 風格的 random walk with restart。它驅動 **Related Notes** 與多跳的**查詢擴展**（以語意搜尋的 top 命中為種子做隨機遊走），找出純向量相似度漏掉的相關筆記。在作者的 vault 上，相較於樸素的 1-hop／共享連結擴展，sparse-bridge recall@10 從 ~60% 提升到 ~84%。
 - **`api_server.py`** 服務 plugin：語意搜尋、找相似、單篇重新索引，以及對話（含檢索增強的 context）。
 - **`mcp_server.py`** 把同一套搜尋以 MCP 工具開給 Claude Code 等：`vault_search`、`vault_similar`、`vault_stats`。
-- **選用 add-on：** 第二份長文**參考語料**（`textbook_indexer.py`，parent-child 切塊）與 `[[wikilink]]` + 實體的**知識圖譜**（`graph_builder.py`）。
+- **選用 add-on：** 第二份長文**參考語料**（`textbook_indexer_v3.py`，parent-child 切塊、混合檢索、可選重排）與 `[[wikilink]]` + 實體的**知識圖譜**（`graph_builder.py`）。
 
 ---
 
@@ -190,18 +190,21 @@ claude mcp add vault-search -- python "/abs/path/to/server/mcp_thin.py"
 如果你把一大批長文參考資料（轉檔的 PDF、手冊）與筆記分開存放，可用 parent-child 切塊索引，做到命中精準又帶上下文：
 
 ```bash
-export VAULT_SEARCH_TEXTBOOK_PATH=/path/to/reference-md
 ollama pull qwen3-embedding:0.6b
-cd server && python textbook_indexer.py
+cd server && python textbook_indexer_v3.py --corpus /path/to/reference-md --db ~/.vault-search/textbook_db
+export VAULT_SEARCH_TEXTBOOK_DB_PATH=~/.vault-search/textbook_db
+export VAULT_SEARCH_TEXTBOOK_PATH=/path/to/reference-md
 ```
 
-會新增 `textbook_search` 工具（MCP + HTTP）。可用 boost 檔讓你信任的來源排前面——見 `examples/source_boost.example.json` 與 `VAULT_SEARCH_SOURCE_BOOST`。
+`textbook_indexer_v3.py` 寫進自己的 DB（server 拿去做別的用途的 DB，例如 vault 的，它會拒寫），每個 chunk 記下語料根目錄、頁碼出處與表格單位，濾掉參考文獻，並建好混合檢索需要的全文索引。重跑只重新 embed 有變動的檔；`--book <資料夾>` 重建單本，`--audit` 逐章檢查有沒有漏。舊的 `textbook_indexer.py`（沒有全文索引、寫進 vault 的 DB）仍可用，但新功能不會再加在那裡。
+
+會新增 `textbook_search` 工具（MCP + HTTP）。輸出會註明 `file` 路徑是相對於哪個語料根目錄；工具說明附上來源衝突時的優先順序：同一本書較新版次優先，不比教科書版次舊的指引優先於教科書，單一研究不推翻指引或教科書共識——要點出分歧並兩邊都引用。重排之後，指引與較新的來源會再加一點分（`VAULT_SEARCH_RERANK_GUIDELINE_PRIOR`、`VAULT_SEARCH_RERANK_YEAR_PRIOR`；設 0 即關閉）。可用 boost 檔讓你信任的來源排前面——見 `examples/source_boost.example.json` 與 `VAULT_SEARCH_SOURCE_BOOST`。
 
 **書目表。** `books.json`（`VAULT_SEARCH_BOOKS_META`，範例見 `examples/books.example.json`）在查詢時併到教科書結果上：標成 `superseded`／`derivative` 的來源預設不出現（傳 `include_superseded` 才看得到）；`corpus_type` 可只搜指引；相似度打平時依 tier、年份排序。不必重建索引。
 
 **混合檢索與重排。** `textbook_search` 預設把向量與全文檢索結果用 RRF 合併（`VAULT_SEARCH_TEXTBOOK_RETRIEVAL=hybrid`；需要 `textbook_indexer_v3.py` 建的全文索引，沒有就退回純向量）。有 CUDA GPU 的話可再加 cross-encoder 重排：把 `VAULT_SEARCH_RERANK_PYTHON` 指向一個裝了 CUDA 版 `torch`＋`transformers` 的 Python，每次搜尋先取 50 筆，用 `BAAI/bge-reranker-v2-m3` 重新打分後留前 n 筆。模型跑在獨立行程（`server/reranker_service.py`）：第一次查詢時啟動（幾秒），閒置 10 分鐘自動結束，別的工作要 GPU lease 時立刻結束——這段期間的搜尋就是不重排。作者自己 435 題的教科書評測上 MRR 約 +0.08，每次查詢約 0.5 秒（RTX 3070 Ti）；`similarity` 仍是 cosine，cross-encoder 分數另放在 `rerank_score`。
 
-**演講語料。** 用同一支 indexer 把第二份語料建進另一個 DB（換 `VAULT_SEARCH_DB_PATH`），再把 `VAULT_SEARCH_LECTURE_DB_PATH` 指過去，就會多一個 `lecture_search` 工具，與 `textbook_search` 分開排名。每門課資料夾的 `_meta.md` 不會出現在結果裡；每筆結果帶 `date`、`speaker`、`course_title`，從該條目的 `Source:` 行解析（`Source: 2025-02-15 講者《課名》· …`），讀不出來的欄位留空，不猜。
+**演講語料。** 把第二份語料建進另一個 DB（`textbook_indexer_v3.py --corpus /path/to/lecture-md --db ~/.vault-search/lecture_db`；`--corpus` 指向「子資料夾就是各門課」的那一層），再把 `VAULT_SEARCH_LECTURE_DB_PATH` 指過去，就會多一個 `lecture_search` 工具，與 `textbook_search` 分開排名。每門課資料夾的 `_meta.md` 不會出現在結果裡；每筆結果帶 `date`、`speaker`、`course_title`，從該條目的 `Source:` 行解析（`Source: 2025-02-15 講者《課名》· …`），讀不出來的欄位留空，不猜。
 </details>
 
 <details>

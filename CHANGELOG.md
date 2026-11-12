@@ -8,6 +8,36 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [3.0.0] — 2026-11-13 — the v3 index generation
+
+No code changes over 2.12.3. 3.0.0 marks the end of the retrieval rework
+released piecemeal as 2.10.0–2.12.3, so it can be adopted as one step. Nothing
+in the HTTP API or the MCP tool signatures was removed; an existing v2 setup
+keeps working unchanged. What a new install gets, in one place:
+
+- **A v3 textbook index in its own database** (`textbook_indexer_v3.py`,
+  `VAULT_SEARCH_TEXTBOOK_DB_PATH`): real page provenance, table units,
+  reference lists filtered, one source per guideline, a full-text index;
+  incremental re-runs, `--book`, `--audit`. (2.11.0, 2.12.0)
+- **Hybrid retrieval by default** for `textbook_search` (vector + full-text,
+  RRF), with real similarity values. (2.11.2, 2.12.0)
+- **Optional cross-encoder reranker** (`BAAI/bge-reranker-v2-m3`, separate
+  process, yields the GPU on demand), then a small guideline / recency prior.
+  (2.12.0, 2.12.1)
+- **Source precedence** stated in the `textbook_search` description, plus the
+  corpus root the result paths are relative to. (2.12.2)
+- **`lecture_search`** over a separate lecture corpus with course metadata;
+  **search scopes**; the **book table** joined at query time; chat on the same
+  search path as MCP. (2.10.0, 2.11.1)
+- **`eval/`**: retrieval and claim-level evaluation with pre-registered
+  decision rules, and `eval/smoke.py` for a nightly check of the running
+  server. (2.10.0–2.12.3)
+
+### Changed
+- **README** (both languages): the reference-corpus setup now uses
+  `textbook_indexer_v3.py` and its own database, documents source precedence
+  and the source prior, and shows the `--corpus` level for a lecture corpus.
+
 ## [2.12.3] — 2026-11-12 — nightly smoke check
 
 ### Added

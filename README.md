@@ -86,7 +86,7 @@ The design priority is **local-first and private**:
 - **`ppr.py`** ranks notes by **Personalized PageRank** over the `[[wiki-link]]` graph — a HippoRAG / LinearRAG-style random-walk-with-restart. It powers **Related Notes** and multi-hop **query expansion** (seeding the walk on the top semantic hits), surfacing relevant notes that pure vector similarity misses. On the author's vault this lifted sparse-bridge recall@10 from ~60% to ~84% versus naive 1-hop / shared-link expansion.
 - **`api_server.py`** serves the plugin: semantic search, find-similar, single-note reindex, and chat (with retrieval-augmented context).
 - **`mcp_server.py`** exposes the same search to MCP clients (e.g. Claude Code) as `vault_search`, `vault_similar`, `vault_stats`.
-- **Optional add-ons:** a second long-form **reference corpus** (`textbook_indexer.py`, parent-child chunking) and a **knowledge graph** of `[[wikilinks]]` + entities (`graph_builder.py`).
+- **Optional add-ons:** a second long-form **reference corpus** (`textbook_indexer_v3.py`, parent-child chunking, hybrid search, optional reranker) and a **knowledge graph** of `[[wikilinks]]` + entities (`graph_builder.py`).
 
 ---
 
@@ -190,18 +190,21 @@ Everything is driven by environment variables (see **`env.example`** for the ful
 If you keep a large corpus of long-form reference docs (converted PDFs, manuals) separate from your notes, index it with parent-child chunking for precise hits *with* surrounding context:
 
 ```bash
-export VAULT_SEARCH_TEXTBOOK_PATH=/path/to/reference-md
 ollama pull qwen3-embedding:0.6b
-cd server && python textbook_indexer.py
+cd server && python textbook_indexer_v3.py --corpus /path/to/reference-md --db ~/.vault-search/textbook_db
+export VAULT_SEARCH_TEXTBOOK_DB_PATH=~/.vault-search/textbook_db
+export VAULT_SEARCH_TEXTBOOK_PATH=/path/to/reference-md
 ```
 
-Adds a `textbook_search` tool (MCP + HTTP). Optionally rank trusted sources higher with a boost file — see `examples/source_boost.example.json` and `VAULT_SEARCH_SOURCE_BOOST`.
+`textbook_indexer_v3.py` writes its own database (it refuses one the server uses for anything else, such as the vault's), records the corpus root, page provenance and table units per chunk, skips reference lists, and builds the full-text index hybrid search needs. Re-runs only re-embed changed files; `--book <folder>` re-embeds one book, `--audit` checks every chapter made it in. The older `textbook_indexer.py` (no FTS, writes into the vault DB) still works but is not where new behaviour lands.
+
+Adds a `textbook_search` tool (MCP + HTTP). Its output says which corpus root the `file` paths are relative to, and its description carries a source-precedence rule for passages that disagree: a newer edition of the same work wins, a guideline not older than a textbook edition outranks it, a single study never overrides a guideline or textbook consensus — name the disagreement and cite both. After reranking, guidelines and recent sources get a small prior (`VAULT_SEARCH_RERANK_GUIDELINE_PRIOR`, `VAULT_SEARCH_RERANK_YEAR_PRIOR`; 0 turns either off). Optionally rank trusted sources higher with a boost file — see `examples/source_boost.example.json` and `VAULT_SEARCH_SOURCE_BOOST`.
 
 **Book table.** A `books.json` (`VAULT_SEARCH_BOOKS_META`, see `examples/books.example.json`) is joined onto textbook results at query time: sources marked `superseded` or `derivative` are hidden unless you pass `include_superseded`, `corpus_type` restricts a search to e.g. guidelines, and tier/year break similarity ties. No reindex needed.
 
 **Hybrid search and reranking.** `textbook_search` fuses vector and full-text results (RRF) by default (`VAULT_SEARCH_TEXTBOOK_RETRIEVAL=hybrid`; needs the full-text index `textbook_indexer_v3.py` builds, otherwise it falls back to vector). With a CUDA GPU you can add a cross-encoder reranker: set `VAULT_SEARCH_RERANK_PYTHON` to a Python that has CUDA `torch` + `transformers`, and each search takes a pool of 50, rescores it with `BAAI/bge-reranker-v2-m3` and keeps the top n. The model runs in a separate process (`server/reranker_service.py`) that starts on the first query (a few seconds), exits after 10 idle minutes, and exits at once when another job claims the GPU lease — searches meanwhile are simply not reranked. On the author's 435-question textbook eval this added about +0.08 MRR at ~0.5 s per query (RTX 3070 Ti); `similarity` stays the cosine, the cross-encoder score is returned as `rerank_score`.
 
-**Lecture corpus.** Index a second reference corpus into its own DB (same indexer, different `VAULT_SEARCH_DB_PATH`) and point `VAULT_SEARCH_LECTURE_DB_PATH` at it: a `lecture_search` tool appears, ranked separately from `textbook_search`. Each course folder's `_meta.md` is left out of the results, and every hit carries the `date`, `speaker` and `course_title` parsed from its entry's `Source:` line (`Source: 2025-02-15 Speaker《Course title》· …`); a field that cannot be read is empty, never guessed.
+**Lecture corpus.** Index a second reference corpus into its own DB (`textbook_indexer_v3.py --corpus /path/to/lecture-md --db ~/.vault-search/lecture_db`; `--corpus` is the folder whose subfolders are the courses) and point `VAULT_SEARCH_LECTURE_DB_PATH` at it: a `lecture_search` tool appears, ranked separately from `textbook_search`. Each course folder's `_meta.md` is left out of the results, and every hit carries the `date`, `speaker` and `course_title` parsed from its entry's `Source:` line (`Source: 2025-02-15 Speaker《Course title》· …`); a field that cannot be read is empty, never guessed.
 </details>
 
 <details>
