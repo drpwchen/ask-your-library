@@ -8,6 +8,34 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.12.0] — 2026-11-12 — hybrid by default; optional cross-encoder reranker
+
+### Changed
+- **`textbook_search` defaults to hybrid retrieval** (vector + full-text, RRF).
+  `VAULT_SEARCH_TEXTBOOK_RETRIEVAL` now defaults to `hybrid`; set it to
+  `vector` for the old behaviour. An index without a full-text index still
+  falls back to vector (and logs `retrieval_fallback`).
+
+### Added
+- **Optional cross-encoder reranker for `textbook_search`**
+  (`server/reranker.py` client, `server/reranker_service.py` service). Off
+  unless `VAULT_SEARCH_RERANK_PYTHON` points at a Python with CUDA torch +
+  transformers. The search builds its usual result list at a pool of
+  `VAULT_SEARCH_RERANK_POOL` (50), scores each passage as the caller would see
+  it (parent section, 800 tokens; table units whole) with
+  `BAAI/bge-reranker-v2-m3`, and keeps the top n. Results gain `rerank_score`
+  and `rank_before_rerank`; `similarity` stays the cosine. The service starts
+  on the first query, exits after `VAULT_SEARCH_RERANK_IDLE_S` (600 s) idle,
+  and exits immediately when another job presses the GPU lease's PAUSE flag or
+  queues for it — it never acquires the lease and never holds the card
+  against a queued job. Every failure (not configured, GPU claimed, start
+  timeout, HTTP error) is soft: the un-reranked list is returned and the
+  reason is logged under `rerank` in the textbook search log. Per-call
+  override: `rerank: true|false`. Lecture search is not reranked.
+- Evidence (author's corpus, 435 silver questions / 163 clusters):
+  0.6B + FTS → + bge MRR +0.079 (cluster CI 0.047–0.111, permutation
+  p < 0.001); ~0.5 s per query on an RTX 3070 Ti.
+
 ## [2.11.2] — 2026-11-11 — hybrid search reports real similarity; permutation test in eval
 
 ### Fixed

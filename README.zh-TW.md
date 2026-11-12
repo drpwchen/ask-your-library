@@ -199,6 +199,8 @@ cd server && python textbook_indexer.py
 
 **書目表。** `books.json`（`VAULT_SEARCH_BOOKS_META`，範例見 `examples/books.example.json`）在查詢時併到教科書結果上：標成 `superseded`／`derivative` 的來源預設不出現（傳 `include_superseded` 才看得到）；`corpus_type` 可只搜指引；相似度打平時依 tier、年份排序。不必重建索引。
 
+**混合檢索與重排。** `textbook_search` 預設把向量與全文檢索結果用 RRF 合併（`VAULT_SEARCH_TEXTBOOK_RETRIEVAL=hybrid`；需要 `textbook_indexer_v3.py` 建的全文索引，沒有就退回純向量）。有 CUDA GPU 的話可再加 cross-encoder 重排：把 `VAULT_SEARCH_RERANK_PYTHON` 指向一個裝了 CUDA 版 `torch`＋`transformers` 的 Python，每次搜尋先取 50 筆，用 `BAAI/bge-reranker-v2-m3` 重新打分後留前 n 筆。模型跑在獨立行程（`server/reranker_service.py`）：第一次查詢時啟動（幾秒），閒置 10 分鐘自動結束，別的工作要 GPU lease 時立刻結束——這段期間的搜尋就是不重排。作者自己 435 題的教科書評測上 MRR 約 +0.08，每次查詢約 0.5 秒（RTX 3070 Ti）；`similarity` 仍是 cosine，cross-encoder 分數另放在 `rerank_score`。
+
 **演講語料。** 用同一支 indexer 把第二份語料建進另一個 DB（換 `VAULT_SEARCH_DB_PATH`），再把 `VAULT_SEARCH_LECTURE_DB_PATH` 指過去，就會多一個 `lecture_search` 工具，與 `textbook_search` 分開排名。每門課資料夾的 `_meta.md` 不會出現在結果裡；每筆結果帶 `date`、`speaker`、`course_title`，從該條目的 `Source:` 行解析（`Source: 2025-02-15 講者《課名》· …`），讀不出來的欄位留空，不猜。
 </details>
 

@@ -95,12 +95,14 @@ from config import (
     SCOPE_MAP_PATH, DEFAULT_SCOPE_ENV,
     LECTURE_DB_PATH, LECTURE_SEARCH_LOG_PATH, BOOKS_META_PATH,
     TEXTBOOK_RETRIEVAL, TEXTBOOK_TABLE_SUFFIX,
+    TEXTBOOK_RERANK, RERANK_POOL, RERANK_MAX_LENGTH,
 )
 import scope as S
 import books_meta
 import provenance as PV
 import table_units as TU
 import lecture_meta
+import reranker as RR
 
 def _is_cowork_path(s: str) -> bool:
     """Check if a book name, folder, or file path matches cowork exclusion patterns."""
@@ -857,6 +859,41 @@ def _textbook_search_v2(arguments: dict, ctx: dict | None = None, corpus: str = 
     return _clean(format_textbook_markdown(results, _clean(arguments["query"]), header=header))
 
 
+def _rerank_doc(r: dict, parent_text: str) -> str:
+    """The passage the cross-encoder sees: what the caller would be shown.
+
+    Same text the R5/R6 eval reranked (the rendered result body): the parent
+    section cut to MAX_PARENT_RETURN_TOKENS, or a v3 table unit whole."""
+    if r.get("table_id"):
+        return _strip_heading_prefix(r["text"])
+    text, _, _ = _truncate_text_to_tokens(parent_text or r.get("text", ""), MAX_PARENT_RETURN_TOKENS)
+    return text
+
+
+def _rerank_pool(pool: list[dict], parents_table, query: str) -> tuple[list[dict], dict]:
+    """Reorder `pool` by cross-encoder score. Soft: on any failure the pool is
+    returned unchanged and the reason goes into the log entry."""
+    t = time.time()
+    try:
+        pids = list(dict.fromkeys(r["parent_id"] for r in pool))
+        prows = fetch_parents_by_id(parents_table, pids, PARENT_CACHE_COLUMNS)
+        docs = [_rerank_doc(r, str((prows.get(r["parent_id"]) or {}).get("text", ""))) for r in pool]
+        scores, info = RR.score(query, docs, max_length=RERANK_MAX_LENGTH)
+    except RR.RerankUnavailable as e:
+        return pool, {"applied": False, "reason": str(e)}
+    except Exception as e:  # noqa: BLE001 -- never fail a search over the reranker
+        return pool, {"applied": False, "reason": f"{type(e).__name__}: {str(e)[:160]}"}
+    order = sorted(range(len(pool)), key=lambda i: -scores[i])
+    out = []
+    for i in order:
+        r = dict(pool[i])
+        r["rerank_score"] = round(float(scores[i]), 4)
+        r["rank_before_rerank"] = i + 1
+        out.append(r)
+    return out, {"applied": True, "pool": len(pool), "start": info.get("start"),
+                 "service_ms": info.get("ms"), "total_ms": int((time.time() - t) * 1000)}
+
+
 def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
                             corpus: str = "textbook") -> list[dict]:
     """v2 parent-child semantic search with dedup, parent context, observability.
@@ -894,8 +931,15 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
     if s > 0:
         query_embedding = [v / s for v in query_embedding]
 
+    # Cross-encoder rerank (textbook only, optional): build the usual result
+    # list at a pool size of RERANK_POOL, score it, keep the top n. The eval
+    # that justified it (R5/R6) measured exactly this: the n=50 list reranked.
+    want_rerank = arguments.get("rerank")
+    want_rerank = (TEXTBOOK_RERANK if want_rerank is None else bool(want_rerank))         and corpus == "textbook" and RR.enabled()
+    n_pool = max(n, RERANK_POOL) if want_rerank else n
+
     # Fetch n*10 to give dedup room (Gemini r5 #3)
-    fetch_limit = n * 10
+    fetch_limit = n_pool * 10
     # Retrieval mode: "vector", "hybrid" (vector + FTS fused by RRF) or "fts".
     # The server default comes from VAULT_SEARCH_TEXTBOOK_RETRIEVAL (textbook
     # only); a caller's `retrieval` argument overrides it (the eval harness uses
@@ -1026,12 +1070,16 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
                     continue
                 book_count[key] = book_count.get(key, 0) + 1
                 soft_filtered.append(r)
-            if corpus == "textbook" and len(soft_filtered) < n:
-                extra = capped[:n - len(soft_filtered)]
+            if corpus == "textbook" and len(soft_filtered) < n_pool:
+                extra = capped[:n_pool - len(soft_filtered)]
                 diversity_backfilled = len(extra)
                 soft_filtered += extra
             deduped = soft_filtered
 
+    deduped = deduped[:n_pool]
+    rerank_info = None
+    if want_rerank:
+        deduped, rerank_info = _rerank_pool(deduped, parents_table, query)
     deduped = deduped[:n]
 
     # Group by unique parent for budget allocation (Gemini r6 #2)
@@ -1098,6 +1146,7 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
             "page_end": r["page_end"],
             "text": r["text"][:300],  # legacy 300-char excerpt
             "similarity": r["similarity"],
+            **({"rerank_score": r["rerank_score"]} if "rerank_score" in r else {}),
             "parent_id": r["parent_id"],
             "parent_text": _clean(truncated_text),
             "parent_truncated": was_truncated,
@@ -1168,6 +1217,7 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
         "corpus_type_filter": corpus_type,
         "retrieval": retrieval,
         "retrieval_fallback": retrieval_fallback,
+        "rerank": rerank_info,
         "query_en": arguments.get("query_en") or None,
         "diversity_backfilled": diversity_backfilled,
         "hidden_by_books_meta": hidden_by_meta,

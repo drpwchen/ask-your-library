@@ -217,11 +217,31 @@ TEXTBOOK_ERROR_ARCHIVE = _path("VAULT_SEARCH_TEXTBOOK_ERRORS_ARCHIVE", str(DATA_
 # (edition / year / tier / corpus_type / status / superseded_by). Keyed by the
 # book folder name. See examples/books.example.json and server/books_meta.py.
 BOOKS_META_PATH = _path("VAULT_SEARCH_BOOKS_META", str(DATA_DIR / "books.json"))
-# Retrieval used by textbook_search when the caller does not ask: "vector"
-# (default), "hybrid" (vector + full-text fused with RRF) or "fts". Hybrid and
+# Retrieval used by textbook_search when the caller does not ask: "hybrid"
+# (default: vector + full-text fused with RRF), "vector" or "fts". Hybrid and
 # fts need a native full-text index on the chunks table (textbook_indexer_v3.py
 # builds one); without it the search falls back to vector and logs why.
-TEXTBOOK_RETRIEVAL = os.environ.get("VAULT_SEARCH_TEXTBOOK_RETRIEVAL", "vector").strip().lower()
+# (Default was "vector" before 2.12: hybrid beat it on every eval set.)
+TEXTBOOK_RETRIEVAL = os.environ.get("VAULT_SEARCH_TEXTBOOK_RETRIEVAL", "hybrid").strip().lower()
+
+# --- Cross-encoder reranker (optional, needs a CUDA GPU) --------------------
+# A Python interpreter that has CUDA torch + transformers. Set it to turn the
+# reranker on: textbook_search then takes a pool of RERANK_POOL results, scores
+# them with the cross-encoder and keeps the top n. The service runs in that
+# interpreter (server/reranker_service.py), starts on the first query, exits
+# after RERANK_IDLE_S idle seconds or as soon as another job claims the GPU
+# lease. Unset (default) = no reranking. Any reranker failure falls back to
+# the un-reranked list.
+RERANK_PYTHON = _path("VAULT_SEARCH_RERANK_PYTHON", None)
+# "on" (default when RERANK_PYTHON is set) or "off" to keep the config but stop
+# reranking. A caller's `rerank` argument overrides it per query.
+TEXTBOOK_RERANK = os.environ.get("VAULT_SEARCH_TEXTBOOK_RERANK", "on").strip().lower() != "off"
+RERANK_MODEL = os.environ.get("VAULT_SEARCH_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANK_PORT = int(os.environ.get("VAULT_SEARCH_RERANK_PORT", "3791"))
+RERANK_POOL = int(os.environ.get("VAULT_SEARCH_RERANK_POOL", "50"))
+RERANK_MAX_LENGTH = int(os.environ.get("VAULT_SEARCH_RERANK_MAX_LENGTH", "512"))
+RERANK_IDLE_S = float(os.environ.get("VAULT_SEARCH_RERANK_IDLE_S", "600"))
+RERANK_START_TIMEOUT = float(os.environ.get("VAULT_SEARCH_RERANK_START_TIMEOUT", "90"))
 # Table-name suffix for a textbook index built with a non-default embedding
 # model (textbook_indexer_v3.py --model ...), e.g. "__qwen3_embedding_4b".
 # Set VAULT_SEARCH_TEXTBOOK_MODEL to the same model. Empty = the default tables.
