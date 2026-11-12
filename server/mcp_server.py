@@ -45,7 +45,6 @@ from textbook_indexer import (
     CHUNKS_TABLE,
     PARENTS_TABLE,
     OLLAMA_NUM_CTX,
-    DB_PATH as TEXTBOOK_DB_PATH,
     CHILD_TARGET_TOKENS,
     CHILD_OVERLAP_TOKENS,
     get_tokenizer,
@@ -95,7 +94,7 @@ from config import (
     SCOPE_MAP_PATH, DEFAULT_SCOPE_ENV,
     LECTURE_DB_PATH, LECTURE_SEARCH_LOG_PATH, BOOKS_META_PATH,
     TEXTBOOK_RETRIEVAL, TEXTBOOK_TABLE_SUFFIX,
-    TEXTBOOK_RERANK, RERANK_POOL, RERANK_MAX_LENGTH,
+    TEXTBOOK_RERANK, RERANK_POOL, RERANK_MAX_LENGTH, TEXTBOOK_DB_PATH,
 )
 import scope as S
 import books_meta
@@ -225,14 +224,14 @@ def get_table():
 
 
 def get_textbook_chunks_table():
-    db = open_db()
+    db = open_textbook_db()
     if CHUNKS_TABLE not in db.table_names():
         return None
     return db.open_table(CHUNKS_TABLE)
 
 
 def get_textbook_parents_table():
-    db = open_db()
+    db = open_textbook_db()
     if PARENTS_TABLE not in db.table_names():
         return None
     return db.open_table(PARENTS_TABLE)
@@ -242,6 +241,12 @@ def get_textbook_parents_table():
 
 def lecture_enabled() -> bool:
     return bool(LECTURE_DB_PATH) and LECTURE_DB_PATH.exists()
+
+
+def open_textbook_db():
+    """The database holding the textbook tables (VAULT_SEARCH_TEXTBOOK_DB_PATH,
+    default the vault's DB_PATH)."""
+    return lancedb.connect(str(TEXTBOOK_DB_PATH))
 
 
 def _lecture_db():
@@ -259,7 +264,7 @@ def get_corpus_tables(corpus: str):
             return None, None
         db = _lecture_db()
     else:
-        db = open_db()
+        db = open_textbook_db()
         suffix = TEXTBOOK_TABLE_SUFFIX
     names = db.table_names()
     cn, pn = CHUNKS_TABLE + suffix, PARENTS_TABLE + suffix
@@ -1146,7 +1151,7 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
             "page_end": r["page_end"],
             "text": r["text"][:300],  # legacy 300-char excerpt
             "similarity": r["similarity"],
-            **({"rerank_score": r["rerank_score"]} if "rerank_score" in r else {}),
+            **({k: r[k] for k in ("rerank_score", "rank_before_rerank") if k in r}),
             "parent_id": r["parent_id"],
             "parent_text": _clean(truncated_text),
             "parent_truncated": was_truncated,
@@ -1637,7 +1642,7 @@ def handle_tool_call(name: str, arguments: dict, context: dict | None = None) ->
                 stats["vault_index"] = f"not built (no '{TABLE_NAME}' table)"
 
             # Include textbook stats if available (v2 schema: chunks + parents)
-            db = open_db()
+            db = open_textbook_db()
             if CHUNKS_TABLE in db.table_names():
                 ch_table = db.open_table(CHUNKS_TABLE)
                 ch_count = ch_table.count_rows()

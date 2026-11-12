@@ -84,6 +84,11 @@ SKIP_FOLDERS = set(_csv(
 
 # --- LanceDB / Ollama -------------------------------------------------------
 DB_PATH = _path("VAULT_SEARCH_DB_PATH", str(DATA_DIR / "lance_db"))
+# The textbook tables can live in their own database (e.g. a rebuilt v3 index)
+# while the vault keeps DB_PATH. Default: the same database as the vault.
+# Only the SEARCH side and textbook_indexer_v3.py follow this; the legacy
+# textbook_indexer.py keeps writing to DB_PATH (lecture indexing relies on it).
+TEXTBOOK_DB_PATH = _path("VAULT_SEARCH_TEXTBOOK_DB_PATH", None) or DB_PATH
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 # Embedding model for vault notes. bge-m3 is bilingual (CN/EN), 1024-dim, runs on CPU.

@@ -54,7 +54,6 @@ from textbook_indexer import (
     TEXTBOOK_EMBEDDING_MODEL, TEXTBOOK_QUERY_PREFIX,
     QUERY_TEMPLATE_VERSION, CHUNKING_VERSION,
     CHUNKS_TABLE, PARENTS_TABLE, OLLAMA_NUM_CTX,
-    DB_PATH as TEXTBOOK_DB_PATH,
     CHILD_TARGET_TOKENS, CHILD_OVERLAP_TOKENS,
     get_tokenizer, tok_len,
 )
@@ -184,7 +183,9 @@ def get_textbook_table():
     """Legacy: returns chunks table (now textbook_chunks). Kept name for compat."""
     global _textbook_table
     if _textbook_table is None:
-        db = open_db()
+        import lancedb
+        from config import TEXTBOOK_DB_PATH
+        db = lancedb.connect(str(TEXTBOOK_DB_PATH))
         if CHUNKS_TABLE in db.table_names():
             _textbook_table = db.open_table(CHUNKS_TABLE)
         else:

@@ -54,7 +54,8 @@ def test_rerank_reorders_pool_and_keeps_n(db, fake_rr):
     assert len(res) == 3
     assert [r["rerank_score"] for r in res] == sorted((r["rerank_score"] for r in res), reverse=True)
     assert res[0]["file"] != plain[0]["file"]  # the fake reversed the order
-    assert all("rerank_score" not in r for r in plain)
+    assert all("rerank_score" not in r and "rank_before_rerank" not in r for r in plain)
+    assert res[0]["rank_before_rerank"] == 12  # the fake put the pool's last item first
     # similarity stays the cosine, not the cross-encoder score
     assert all(0.0 <= r["similarity"] <= 1.0 for r in res)
 

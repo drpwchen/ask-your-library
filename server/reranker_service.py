@@ -135,6 +135,16 @@ def make_handler(st: State):
     return Handler
 
 
+class QuietServer(HTTPServer):
+    """Health probes that gave up while the model was loading are still in the
+    accept backlog; answering them raises ConnectionAborted. Not an error."""
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def watcher(st: State, server: HTTPServer):
     while True:
         time.sleep(WATCH_INTERVAL_S)
@@ -167,7 +177,7 @@ def main():
     # Bind before loading: a second copy started by a racing query exits here
     # instead of loading a second model onto the card.
     try:
-        server = HTTPServer(("127.0.0.1", a.port), None)
+        server = QuietServer(("127.0.0.1", a.port), None)
     except OSError as e:
         print(f"[reranker] port {a.port} busy ({e}) — another instance is up", flush=True)
         sys.exit(4)

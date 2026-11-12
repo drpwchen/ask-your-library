@@ -1292,6 +1292,11 @@ def index_textbooks(
     print(f"[start] textbook_indexer v2 — {now_iso()}", flush=True)
     print(f"  incremental={incremental} book_filter={book_filter} force={force}", flush=True)
 
+    # A v3 database (textbook_indexer_v3.py) has a different schema and
+    # provenance; v2 rows in it would corrupt it silently.
+    if (DB_PATH / "_v3_state").is_dir() or (DB_PATH / "_vault_state").is_dir():
+        raise SystemExit(f"[refuse] {DB_PATH} is a v3 database — index it with "
+                         f"textbook_indexer_v3.py, not the v2 textbook_indexer.py")
     db = lancedb.connect(str(DB_PATH))
     chunks_table = get_or_create_table(db, CHUNKS_TABLE, CHUNKS_SCHEMA)
     parents_table = get_or_create_table(db, PARENTS_TABLE, PARENTS_SCHEMA)

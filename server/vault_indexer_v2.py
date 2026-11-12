@@ -859,6 +859,11 @@ def configure(db: str | None, profile: str) -> None:
     elif profile == "v3":
         raise SystemExit("[refuse] --profile v3 needs --db pointing at a NEW database "
                          "(e.g. ~/.vault-search/lance_db_v3)")
+    if profile == "v2" and (Path(DB_PATH) / "_vault_state").is_dir():
+        # A v3-profile vault index (scope column, YAML frontmatter): default-
+        # profile rows would mix into it. Pass --profile v3 --db <it> instead.
+        raise SystemExit(f"[refuse] {DB_PATH} holds a v3-profile vault index; "
+                         f"run with --profile v3 --db {DB_PATH}")
 
 
 def resolve_file_errors(error_log: dict, rel_path: str, status: str = "fixed") -> int:

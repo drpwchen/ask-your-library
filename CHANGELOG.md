@@ -8,7 +8,7 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
-## [2.12.0] — 2026-11-12 — hybrid by default; optional cross-encoder reranker
+## [2.12.0] — 2026-11-12 — hybrid by default; optional cross-encoder reranker; separate textbook DB
 
 ### Changed
 - **`textbook_search` defaults to hybrid retrieval** (vector + full-text, RRF).
@@ -32,6 +32,16 @@ so it deliberately does not track these tags.
   timeout, HTTP error) is soft: the un-reranked list is returned and the
   reason is logged under `rerank` in the textbook search log. Per-call
   override: `rerank: true|false`. Lecture search is not reranked.
+- **`VAULT_SEARCH_TEXTBOOK_DB_PATH`**: the textbook tables can live in their
+  own database (e.g. a rebuilt v3 index) while the vault stays on
+  `VAULT_SEARCH_DB_PATH`. Default: the same database. Search side and
+  `textbook_indexer_v3.py` follow it; the legacy `textbook_indexer.py` keeps
+  `VAULT_SEARCH_DB_PATH` (lecture indexing sets that one).
+- **Guards between v2 and v3 databases.** `textbook_indexer_v3.py` may now
+  update a live database that is itself a v3 database (the normal incremental
+  run after a switch-over) — a live v2 database is still refused. The v2
+  `textbook_indexer.py` refuses a v3 database, and a default-profile
+  `vault_indexer_v2.py` run refuses a database holding a v3-profile vault index.
 - Evidence (author's corpus, 435 silver questions / 163 clusters):
   0.6B + FTS → + bge MRR +0.079 (cluster CI 0.047–0.111, permutation
   p < 0.001); ~0.5 s per query on an RTX 3070 Ti.

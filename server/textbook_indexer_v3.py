@@ -118,14 +118,23 @@ def _resolved(p) -> Path:
     return Path(p).expanduser().resolve()
 
 
+def is_v3_db(db) -> bool:
+    """A database a v3 tool built: textbook (`_v3_state/`) or vault (`_vault_state/`)."""
+    d = Path(db).expanduser()
+    return (d / "_v3_state").is_dir() or (d / "_vault_state").is_dir()
+
+
 def check_target(db: Path, corpus: Path | None, forbidden: list[Path]) -> None:
     """Refuse a --db that is (or contains, or sits inside) a live database or
-    the corpus itself."""
+    the corpus itself. A live database that is ITSELF a v3 database is fine:
+    after the switch-over, incremental runs write to it by design."""
     d = _resolved(db)
     for f in forbidden:
         if f is None:
             continue
         f = _resolved(f)
+        if d == f and is_v3_db(d):
+            continue
         if d == f or f in d.parents or d in f.parents:
             raise UnsafeTarget(f"[refuse] --db {d} overlaps the live database {f}. "
                                f"v3 builds go to a new directory (e.g. ~/.vault-search/lance_db_v3).")
@@ -139,8 +148,9 @@ def live_paths() -> list[Path]:
     """Databases the running server uses. Read lazily: config needs VAULT_PATH."""
     out = []
     try:
-        from config import DB_PATH, LECTURE_DB_PATH, DATA_DIR
-        out += [DB_PATH, LECTURE_DB_PATH, DATA_DIR / "lance_db", DATA_DIR / "lecture_db"]
+        from config import DB_PATH, LECTURE_DB_PATH, DATA_DIR, TEXTBOOK_DB_PATH
+        out += [DB_PATH, TEXTBOOK_DB_PATH, LECTURE_DB_PATH,
+                DATA_DIR / "lance_db", DATA_DIR / "lecture_db"]
     except Exception:
         home = Path("~/.vault-search").expanduser()
         out += [home / "lance_db", home / "lecture_db"]

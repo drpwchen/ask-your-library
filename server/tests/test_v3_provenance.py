@@ -410,6 +410,28 @@ def test_vault_v3_profile_needs_its_own_db(tmp_path, monkeypatch):
         assert VI.DB_PATH == tmp_path / "lance_db_v3"
         assert VI.HASH_CACHE_PATH.parent == tmp_path / "lance_db_v3" / "_vault_state"
         assert "scope" in VI.chunks_schema().names and "profile=v3" in VI._signature_parts()
+        # A v2-profile run must never write into that v3 vault index.
+        with pytest.raises(SystemExit, match="v3-profile vault index"):
+            VI.configure(None, "v2")
     finally:
-        VI.configure(None, "v2")
+        VI.PROFILE = "v2"
     assert "scope" not in VI.chunks_schema().names and "profile=v3" not in VI._signature_parts()
+
+
+def test_live_v3_db_is_writable_by_v3_only(tmp_path, monkeypatch):
+    """After the switch-over the live textbook DB IS the v3 DB: the v3 indexer
+    may update it; the v2 textbook indexer must refuse it."""
+    import textbook_indexer_v3 as V
+    import textbook_indexer as T2
+    live = tmp_path / "lance_db_v3"
+    (live / "_v3_state").mkdir(parents=True)
+    V.check_target(live, tmp_path / "corpus", [live])          # allowed
+    old = tmp_path / "lance_db"
+    old.mkdir()
+    with pytest.raises(SystemExit):
+        V.check_target(old, tmp_path / "corpus", [old])         # live v2: refused
+    with pytest.raises(SystemExit):
+        V.check_target(live / "sub", tmp_path / "corpus", [live])  # nested: refused
+    monkeypatch.setattr(T2, "DB_PATH", live)
+    with pytest.raises(SystemExit, match="v3 database"):
+        T2.index_textbooks(incremental=True)
