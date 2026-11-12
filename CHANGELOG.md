@@ -8,6 +8,23 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.12.2] — 2026-11-12 — textbook_search names its corpus root and source precedence
+
+### Added
+- **`textbook_search` output says what `file` is relative to.** A v3 textbook
+  DB records the corpus it was built from (`_v3_state/index_meta.json` →
+  `corpus`); the second line of the output is now
+  ``files are relative to `<corpus>` ``. Result paths point into the re-split
+  corpus, whose chapter files differ from the original conversion, so opening
+  them against the old tree silently failed. A v2 DB adds nothing.
+- **Source precedence when passages disagree.** The tool description now
+  states the rule (newer edition of the same work wins; a guideline not older
+  than a textbook edition takes precedence over it; a single study never
+  overrides a guideline or textbook consensus; name the disagreement and cite
+  both). When a guideline appears next to an older textbook edition, the
+  output ends with a one-line `> precedence:` reminder. Answers in the Phase 0
+  end-to-end check followed older textbooks against newer guidelines (T3).
+
 ## [2.12.1] — 2026-11-12 — guideline / recency prior after reranking
 
 ### Changed

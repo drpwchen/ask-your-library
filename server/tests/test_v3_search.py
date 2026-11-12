@@ -5,6 +5,7 @@ VAULT_SEARCH_DATA_DIR at a temp folder) and replaces the Ollama client with a
 fixed-vector fake, so nothing here needs a model.
 """
 
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -204,3 +205,33 @@ def test_row_similarity_fallbacks():
     assert rs({"vector": [0.6, 0.8]}) == 0.0            # no query vector
     assert rs({"vector": [1.0]}, [1.0, 0.0]) == 0.0      # width mismatch
     assert rs({}, [1.0]) == 0.0
+
+
+def test_textbook_output_names_corpus_root(tmp_path, monkeypatch):
+    """A v3 DB records its corpus; textbook_search output says what `file` is relative to."""
+    st = tmp_path / "db" / "_v3_state"
+    st.mkdir(parents=True)
+    (st / "index_meta.json").write_text(json.dumps({"corpus": "/x/textbook-md-v2"}), encoding="utf-8")
+    monkeypatch.setattr(mcp_server, "TEXTBOOK_DB_PATH", tmp_path / "db")
+    mcp_server._CORPUS_ROOT_CACHE.clear()
+    res = [{"book": "B", "file": "B/ch01.md", "page_start": 1, "page_end": 1, "similarity": 0.5}]
+    md = mcp_server.format_textbook_markdown(res, "q")
+    assert md.splitlines()[1] == "files are relative to `/x/textbook-md-v2`"
+    assert "relative to" not in mcp_server.format_textbook_markdown(res, "q", header="lecture_search")
+    # a v2 DB (no state dir) adds nothing
+    monkeypatch.setattr(mcp_server, "TEXTBOOK_DB_PATH", tmp_path / "v2db")
+    mcp_server._CORPUS_ROOT_CACHE.clear()
+    assert "relative to" not in mcp_server.format_textbook_markdown(res, "q")
+
+
+def test_precedence_note_only_when_guideline_is_newer(tmp_path, monkeypatch):
+    monkeypatch.setattr(mcp_server, "TEXTBOOK_DB_PATH", tmp_path / "none")
+    mcp_server._CORPUS_ROOT_CACHE.clear()
+    g = {"book": "_Guidelines", "file": "g.md", "meta": {"corpus_type": "guideline", "year": 2024}}
+    old = {"book": "Old_5e_2013", "file": "o.md", "meta": {"corpus_type": "textbook", "year": 2013}}
+    new = {"book": "New_2e_2025", "file": "n.md", "meta": {"corpus_type": "textbook", "year": 2025}}
+    md = mcp_server.format_textbook_markdown([old, g], "q")
+    assert md.splitlines()[-1].startswith("> precedence: guideline passages (2024)") and "(from 2013)" in md
+    assert "precedence" not in mcp_server.format_textbook_markdown([new, g], "q")
+    assert "precedence" not in mcp_server.format_textbook_markdown([old, new], "q")
+    assert "precedence" not in mcp_server.format_textbook_markdown([old, g], "q", header="lecture_search")

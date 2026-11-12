@@ -507,6 +507,29 @@ def format_related_markdown(related: list[dict], note: str) -> str:
     return "\n".join(lines)
 
 
+_CORPUS_ROOT_CACHE: dict = {}
+
+
+def textbook_corpus_root(db_path=None) -> str:
+    """The corpus a v3 textbook DB was built from (``_v3_state/index_meta*.json`` → ``corpus``),
+    so callers know what each result's relative ``file`` path is relative to. ``""`` for a
+    v2 DB (no state dir) or unreadable meta. Cached per DB path."""
+    db = Path(db_path or TEXTBOOK_DB_PATH)
+    key = str(db)
+    if key not in _CORPUS_ROOT_CACHE:
+        root = ""
+        st = db / "_v3_state"
+        for meta in ([st / "index_meta.json"] + sorted(st.glob("index_meta__*.json"))) if st.is_dir() else []:
+            try:
+                root = json.loads(meta.read_text(encoding="utf-8")).get("corpus", "") or ""
+            except (OSError, ValueError):
+                continue
+            if root:
+                break
+        _CORPUS_ROOT_CACHE[key] = root
+    return _CORPUS_ROOT_CACHE[key]
+
+
 def format_textbook_markdown(results: list[dict], query: str, header: str = "textbook_search") -> str:
     """Render textbook_search / lecture_search results as compact Markdown.
 
@@ -517,6 +540,9 @@ def format_textbook_markdown(results: list[dict], query: str, header: str = "tex
         what = "lecture" if header == "lecture_search" else "textbook"
         return f'No {what} passages found for "{query}".'
     lines = [f'# {header}: "{query}" — {len(results)} passages', ""]
+    root = textbook_corpus_root() if header == "textbook_search" else ""
+    if root:
+        lines[1:1] = [f"files are relative to `{root}`"]
     for i, r in enumerate(results, 1):
         loc = []
         ps, pe = r.get("page_start", 0), r.get("page_end", 0)
@@ -548,7 +574,32 @@ def format_textbook_markdown(results: list[dict], query: str, header: str = "tex
         if r.get("has_figure_ref") and r.get("figure_ids"):
             lines.append(f"   figures: {', '.join(r['figure_ids'])}")
         lines.append("")
+    note = _precedence_note(results) if header == "textbook_search" else ""
+    if note:
+        lines.append(note)
     return "\n".join(lines).rstrip()
+
+
+def _precedence_note(results: list[dict]) -> str:
+    """A one-line reminder when a guideline sits next to an OLDER textbook edition -- the case
+    where answers followed the textbook against the guideline (Phase 0 e2e, T3)."""
+    def year(r):
+        y = (r.get("meta") or {}).get("year") or r.get("year")
+        try:
+            return int(y)
+        except (TypeError, ValueError):
+            return None
+
+    def ctype(r):
+        return (r.get("meta") or {}).get("corpus_type") or r.get("corpus_type") or ""
+
+    g_years = [y for r in results if ctype(r) == "guideline" and (y := year(r))]
+    t_years = [y for r in results if ctype(r) != "guideline" and (y := year(r))]
+    if not g_years or not t_years or min(t_years) >= max(g_years):
+        return ""
+    return (f"> precedence: guideline passages ({max(g_years)}) appear with older textbook editions "
+            f"(from {min(t_years)}). If they disagree, the newer guideline takes precedence over the "
+            f"older textbook; say so and cite both.")
 
 
 # --- MCP Protocol ---
@@ -657,7 +708,7 @@ TOOLS = [
     },
     {
         "name": "textbook_search",
-        "description": "Semantic search across an optional secondary corpus of long-form reference documents (e.g. converted textbooks / manuals), indexed separately from your notes. Parent-child two-tier index — children for the precise hit, parent_text for the surrounding subsection context. Set full_parent=true to retrieve untruncated parent text (capped at 4K tokens per parent and 12K total).",
+        "description": "Semantic search across an optional secondary corpus of long-form reference documents (e.g. converted textbooks / manuals), indexed separately from your notes. Parent-child two-tier index — children for the precise hit, parent_text for the surrounding subsection context. Set full_parent=true to retrieve untruncated parent text (capped at 4K tokens per parent and 12K total). Each passage carries its provenance (`source:` type, edition, year). When passages disagree: the newer edition of the same work wins; a guideline whose year is not older than a textbook edition takes precedence over that textbook; a single study never overrides a guideline or textbook consensus. State the disagreement and cite both sides instead of silently picking one.",
         "inputSchema": {
             "type": "object",
             "properties": {
