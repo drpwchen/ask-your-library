@@ -247,6 +247,12 @@ RERANK_POOL = int(os.environ.get("VAULT_SEARCH_RERANK_POOL", "50"))
 RERANK_MAX_LENGTH = int(os.environ.get("VAULT_SEARCH_RERANK_MAX_LENGTH", "512"))
 RERANK_IDLE_S = float(os.environ.get("VAULT_SEARCH_RERANK_IDLE_S", "600"))
 RERANK_START_TIMEOUT = float(os.environ.get("VAULT_SEARCH_RERANK_START_TIMEOUT", "90"))
+# Source prior added to the cross-encoder score before the final cut (bge logit
+# scale). Guidelines get RERANK_GUIDELINE_PRIOR; every source gets
+# RERANK_YEAR_PRIOR * clip((year - 2015) / 10, 0, 1). Chosen 2026-11-12 on the
+# gold T3 set (guideline questions lost to older textbooks); 0 turns either off.
+RERANK_GUIDELINE_PRIOR = float(os.environ.get("VAULT_SEARCH_RERANK_GUIDELINE_PRIOR", "3"))
+RERANK_YEAR_PRIOR = float(os.environ.get("VAULT_SEARCH_RERANK_YEAR_PRIOR", "0.5"))
 # Table-name suffix for a textbook index built with a non-default embedding
 # model (textbook_indexer_v3.py --model ...), e.g. "__qwen3_embedding_4b".
 # Set VAULT_SEARCH_TEXTBOOK_MODEL to the same model. Empty = the default tables.

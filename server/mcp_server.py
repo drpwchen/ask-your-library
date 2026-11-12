@@ -95,6 +95,7 @@ from config import (
     LECTURE_DB_PATH, LECTURE_SEARCH_LOG_PATH, BOOKS_META_PATH,
     TEXTBOOK_RETRIEVAL, TEXTBOOK_TABLE_SUFFIX,
     TEXTBOOK_RERANK, RERANK_POOL, RERANK_MAX_LENGTH, TEXTBOOK_DB_PATH,
+    RERANK_GUIDELINE_PRIOR, RERANK_YEAR_PRIOR,
 )
 import scope as S
 import books_meta
@@ -875,6 +876,17 @@ def _rerank_doc(r: dict, parent_text: str) -> str:
     return text
 
 
+def _source_prior(r: dict) -> float:
+    """Ranking prior for one result: guidelines and newer sources first when the
+    cross-encoder scores are close (see RERANK_GUIDELINE_PRIOR in config)."""
+    m = r.get("meta") or {}
+    p = RERANK_GUIDELINE_PRIOR if m.get("corpus_type") == "guideline" else 0.0
+    year = m.get("year")
+    if RERANK_YEAR_PRIOR and year:
+        p += RERANK_YEAR_PRIOR * min(max((int(year) - 2015) / 10, 0.0), 1.0)
+    return p
+
+
 def _rerank_pool(pool: list[dict], parents_table, query: str) -> tuple[list[dict], dict]:
     """Reorder `pool` by cross-encoder score. Soft: on any failure the pool is
     returned unchanged and the reason goes into the log entry."""
@@ -888,12 +900,15 @@ def _rerank_pool(pool: list[dict], parents_table, query: str) -> tuple[list[dict
         return pool, {"applied": False, "reason": str(e)}
     except Exception as e:  # noqa: BLE001 -- never fail a search over the reranker
         return pool, {"applied": False, "reason": f"{type(e).__name__}: {str(e)[:160]}"}
-    order = sorted(range(len(pool)), key=lambda i: -scores[i])
+    adjusted = [float(scores[i]) + _source_prior(pool[i]) for i in range(len(pool))]
+    order = sorted(range(len(pool)), key=lambda i: -adjusted[i])
     out = []
     for i in order:
         r = dict(pool[i])
         r["rerank_score"] = round(float(scores[i]), 4)
         r["rank_before_rerank"] = i + 1
+        if adjusted[i] != float(scores[i]):
+            r["rerank_prior"] = round(adjusted[i] - float(scores[i]), 3)
         out.append(r)
     return out, {"applied": True, "pool": len(pool), "start": info.get("start"),
                  "service_ms": info.get("ms"), "total_ms": int((time.time() - t) * 1000)}

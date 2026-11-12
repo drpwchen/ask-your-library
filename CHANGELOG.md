@@ -8,6 +8,18 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [2.12.1] — 2026-11-12 — guideline / recency prior after reranking
+
+### Changed
+- **`textbook_search` adds a source prior to the cross-encoder score** before
+  the final cut: `VAULT_SEARCH_RERANK_GUIDELINE_PRIOR` (default 3, bge logit
+  scale) for guidelines, plus `VAULT_SEARCH_RERANK_YEAR_PRIOR` (default 0.5) ×
+  `clip((year − 2015) / 10, 0, 1)` for every source with a year. Guideline
+  questions were losing to older textbooks that score about the same. Results
+  carry `rerank_prior` when it moved them; `rerank_score` stays the raw
+  cross-encoder score. Set both to 0 for the 2.12.0 ordering. Only applies when
+  the reranker ran.
+
 ## [2.12.0] — 2026-11-12 — hybrid by default; optional cross-encoder reranker; separate textbook DB
 
 ### Changed

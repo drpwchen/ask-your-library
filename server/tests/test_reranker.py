@@ -188,3 +188,30 @@ def test_watcher_exits_on_idle_and_on_claim(tmp_path, monkeypatch):
         assert not th.is_alive() and st.stopping, trigger
         server.server_close()
         (tmp_path / "PAUSE").unlink(missing_ok=True)
+
+
+def test_source_prior_lifts_guideline_and_newer(monkeypatch):
+    monkeypatch.setattr(mcp_server, "RERANK_GUIDELINE_PRIOR", 3.0)
+    monkeypatch.setattr(mcp_server, "RERANK_YEAR_PRIOR", 0.5)
+    sp = mcp_server._source_prior
+    assert sp({"meta": {"corpus_type": "guideline", "year": 2026}}) == 3.5
+    assert sp({"meta": {"corpus_type": "textbook", "year": 2010}}) == 0.0
+    assert sp({"meta": {"corpus_type": "textbook", "year": 2020}}) == 0.25
+    assert sp({"meta": {}}) == 0.0
+    monkeypatch.setattr(mcp_server, "RERANK_GUIDELINE_PRIOR", 0.0)
+    monkeypatch.setattr(mcp_server, "RERANK_YEAR_PRIOR", 0.0)
+    assert sp({"meta": {"corpus_type": "guideline", "year": 2026}}) == 0.0
+
+
+def test_prior_reorders_close_scores(monkeypatch):
+    monkeypatch.setattr(mcp_server, "RERANK_GUIDELINE_PRIOR", 3.0)
+    monkeypatch.setattr(mcp_server, "RERANK_YEAR_PRIOR", 0.0)
+    monkeypatch.setattr(mcp_server, "fetch_parents_by_id", lambda *a, **k: {})
+    monkeypatch.setattr(RR, "score", lambda q, docs, **k: ([2.0, 0.5, -5.0], {"start": "warm", "ms": 1}))
+    pool = [{"parent_id": "a", "text": "a", "meta": {"corpus_type": "textbook"}},
+            {"parent_id": "b", "text": "b", "meta": {"corpus_type": "guideline"}},
+            {"parent_id": "c", "text": "c", "meta": {"corpus_type": "guideline"}}]
+    out, info = mcp_server._rerank_pool(pool, None, "q")
+    assert [r["parent_id"] for r in out] == ["b", "a", "c"]  # prior beats a 1.5 gap, not a 7 gap
+    assert out[0]["rerank_score"] == 0.5 and out[0]["rerank_prior"] == 3.0
+    assert "rerank_prior" not in out[1]
