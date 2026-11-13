@@ -8,6 +8,12 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [3.2.1] — 2026-11-13 — agent notes
+
+### Added
+- `AGENTS.md` (with a `CLAUDE.md` bridge): setup notes for coding agents — the `python-dotenv`
+  requirement and the separate-deployment caveat.
+
 ## [3.2.0] — 2026-11-13 — opt-in hybrid retrieval and multi-section excerpts for the vault
 
 Both default OFF; with neither set, results are unchanged.
