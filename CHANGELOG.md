@@ -8,7 +8,10 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
-## [3.2.1] — 2026-11-13 — corpus folders with one command; reference chapters stay out of the v3 index
+## [3.3.0] — 2026-11-14 — ask-your-library: corpus folders with one command; reference chapters stay out of the v3 index
+
+First public release since 2.9.1; it also carries 2.10.0–3.2.0 (sections below), which were
+tagged locally but never published separately.
 
 vault-search is now **ask-your-library** (`drpwchen/ask-your-library`); README, AGENTS.md, docs and the plugin
 description use the new name. Env vars (`VAULT_SEARCH_*`), MCP server/tool names, the plugin id and
