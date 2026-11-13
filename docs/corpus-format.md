@@ -75,8 +75,9 @@ an unknown `kind`) is an **error**.
     ch01_Examination.md
     ch02_Exercise.md
   _Guidelines/                         every guideline in its own sub-folder
+    _manifest.json                     optional, ONE for all guidelines (--resplit)
     ExampleSociety_LowBackPain_2023/
-      full_text.md
+      full_text.md                     or chapter files after --resplit
 ```
 
 ### Folder names
@@ -113,7 +114,16 @@ from the manifest, when there is one.
 
 Written by textbook-to-note `convert.py --resplit` (`T2N_SPLIT_MANIFEST=1`) into the book
 folder; the full schema lives in textbook-to-note. The indexer looks for the nearest
-manifest from a file's folder up to the source folder and uses these fields:
+manifest from a file's folder up to the source folder.
+
+Guidelines are the exception: `--resplit` splits `_Guidelines` as one book and writes a
+single `<root>/_Guidelines/_manifest.json` whose `files[].file` entries are
+`<Name>/<file>` (e.g. `ExampleSociety_LowBackPain_2023/ch01_Recommendations.md`). A
+guideline folder without a manifest of its own uses that shared one, matched by the
+`<Name>/<file>` path (a bare file name would be ambiguous across guidelines). A
+`_manifest.json` inside `_Guidelines/<Name>/` still wins when present.
+
+The fields the indexer uses:
 
 | field | used for |
 |---|---|

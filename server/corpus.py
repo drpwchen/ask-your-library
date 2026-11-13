@@ -189,6 +189,12 @@ def check(root, books_meta: Path | None = None) -> Report:
 def _check_textbook(root: Path, rep: Report) -> None:
     n_sources = n_guidelines = n_files = n_manifests = 0
     lecture_like = 0
+    # The shared guideline manifest textbook-to-note --resplit writes
+    # (entries "<Name>/<file>"); used for guideline folders without their own.
+    gl = root / P.GUIDELINE_BOOK
+    if (gl / P.MANIFEST_NAME).exists():
+        n_manifests += 1
+        _check_manifest(gl, root, rep)
     for book, u in units(root):
         rel = _rel(u, root)
         is_gl = book == P.GUIDELINE_BOOK

@@ -43,6 +43,12 @@ so it deliberately does not track these tags.
   none (measured on the author's index: 0 of 16,877 parents) and every hit came back with
   those fields empty. Entries the parents table cannot answer are now read from the corpus
   root the indexer recorded (`_v3_state/index_meta.json`). No reindex needed.
+- **Guideline chapters get their manifest.** textbook-to-note `--resplit` writes one
+  `_Guidelines/_manifest.json` (entries `<Name>/<file>`), but the v3 indexer only looked
+  for a manifest inside each `_Guidelines/<Name>/` folder, so split guideline chapters
+  were indexed with no chapter number, title, printed pages or `split_method`. A
+  guideline folder without its own manifest now uses the shared one. Rows already in an
+  index change only when that guideline is re-indexed (`--book <Name>`).
 - README's lecture example used `--db ~/.vault-search/lecture_db`, which the indexer
   refuses (it is the default live lecture path); it is `lecture_db_v3` now. `env.example`
   no longer says the lecture index is built with `textbook_indexer.py`, and marks which

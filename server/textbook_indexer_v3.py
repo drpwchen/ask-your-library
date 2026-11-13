@@ -215,7 +215,12 @@ def choose_files(unit_dir: Path) -> tuple[list[Path], list[dict]]:
 
 def find_manifest(f: Path, unit_dir: Path, cache: dict) -> tuple[dict | None, str]:
     """Nearest ``_manifest.json`` from the file's folder up to the unit root.
-    Returns (manifest, path of f relative to the manifest's folder)."""
+    Returns (manifest, path of f relative to the manifest's folder).
+
+    A guideline unit (``_Guidelines/<Name>``) without its own manifest falls
+    back to the shared ``_Guidelines/_manifest.json`` that textbook-to-note
+    ``--resplit`` writes (it splits ``_Guidelines`` as one book), whose entries
+    are ``<Name>/<file>``."""
     d = f.parent
     while True:
         if d not in cache:
@@ -223,8 +228,15 @@ def find_manifest(f: Path, unit_dir: Path, cache: dict) -> tuple[dict | None, st
         if cache[d] is not None:
             return cache[d], str(f.relative_to(d)).replace("\\", "/")
         if d == unit_dir or unit_dir not in d.parents:
-            return None, f.name
+            break
         d = d.parent
+    g = unit_dir.parent
+    if g.name == P.GUIDELINE_BOOK and f.is_relative_to(g):
+        if g not in cache:
+            cache[g] = P.load_manifest(g)
+        if cache[g] is not None:
+            return cache[g], str(f.relative_to(g)).replace("\\", "/")
+    return None, f.name
 
 
 def chapter_title(f: Path, unit_dir: Path, entry: dict) -> str:

@@ -302,3 +302,67 @@ def test_lecture_source_read_from_corpus_when_index_has_none(tmp_path):
     assert got[f]["speaker"] == "Dr. Example"
     assert got[f]["course_title"] == "Shoulder Ultrasound Workshop"
     assert lecture_meta.source_by_file(None, [f], lambda s: s) == {}
+
+
+# ----------------------------------------------------------------------------- shared guideline manifest
+
+def _shared_guideline_manifest(root: Path, own: bool = False) -> Path:
+    """textbook-to-note --resplit splits `_Guidelines` as ONE book: one manifest at
+    `_Guidelines/_manifest.json` whose entries are `<Name>/<file>`."""
+    g = root / "_Guidelines" / "ExampleSociety_LowBackPain_2023"
+    (g / "full_text.md").rename(g / "ch01_Recommendations.md")
+    (root / "_Guidelines" / "_manifest.json").write_text(json.dumps({
+        "schema": 1, "book": "_Guidelines", "split_method": "bookmarks",
+        "page_labels": {"1": "S1", "2": "S2"}, "page_confidence": "printed",
+        "files": [{"file": "ExampleSociety_LowBackPain_2023/ch01_Recommendations.md",
+                   "chapter_number": 1, "title": "Recommendations", "pdf_page_start": 1,
+                   "kind": "body"}]}), encoding="utf-8")
+    if own:
+        (g / "_manifest.json").write_text(json.dumps({
+            "schema": 1, "files": [{"file": "ch01_Recommendations.md", "chapter_number": 7,
+                                    "title": "Own"}]}), encoding="utf-8")
+    return g
+
+
+def test_find_manifest_falls_back_to_shared_guideline_manifest(tb):
+    import textbook_indexer_v3 as V
+    g = _shared_guideline_manifest(tb)
+    f = g / "ch01_Recommendations.md"
+    m, rel = V.find_manifest(f, g, {})
+    assert rel == "ExampleSociety_LowBackPain_2023/ch01_Recommendations.md"
+    import provenance as P
+    assert P.file_entry(m, rel)["chapter_number"] == 1
+    # the guideline's own manifest still wins
+    g = _shared_guideline_manifest(Path(shutil.copytree(FIXTURES / "textbook", tb.parent / "tb2")), own=True)
+    m, rel = V.find_manifest(g / "ch01_Recommendations.md", g, {})
+    assert rel == "ch01_Recommendations.md" and P.file_entry(m, rel)["chapter_number"] == 7
+    # an ordinary book never climbs above its own folder
+    book = tb / TEXTBOOK_SRC
+    (tb / "_manifest.json").write_text('{"files": []}', encoding="utf-8")
+    (book / "_manifest.json").unlink()
+    assert V.find_manifest(book / "ch01_Examination.md", book, {}) == (None, "ch01_Examination.md")
+
+
+def test_check_reads_shared_guideline_manifest(tb):
+    _shared_guideline_manifest(tb)
+    rep = corpus.check(tb)
+    assert rep.errors == [] and rep.warnings == []
+    assert rep.stats["manifests"] == 2
+    m = json.loads((tb / "_Guidelines" / "_manifest.json").read_text(encoding="utf-8"))
+    m["files"][0]["file"] = "ExampleSociety_LowBackPain_2023/gone.md"
+    (tb / "_Guidelines" / "_manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    assert codes(corpus.check(tb).warnings) == {"manifest_stale"}
+
+
+def test_add_indexes_guideline_with_shared_manifest(tb, tmp_path, settings, fake_index):
+    _shared_guideline_manifest(tb)
+    db = tmp_path / "gdb"
+    assert corpus.main(["add", str(tb), "--db", str(db), "--no-gpu-lease"]) == 0
+    df = (lancedb.connect(str(db)).open_table("textbook_chunks").search()
+          .where("book = '_Guidelines'")
+          .select(["chapter", "chapter_number", "printed_page_start", "page_confidence", "split_method"])
+          .limit(100).to_pandas())
+    assert len(df) and set(df["chapter"]) == {"Recommendations"}
+    assert set(df["chapter_number"]) == {1}
+    assert set(df["page_confidence"]) == {"printed"} and set(df["split_method"]) == {"bookmarks"}
+    assert set(df["printed_page_start"]) <= {"S1", "S2"}
