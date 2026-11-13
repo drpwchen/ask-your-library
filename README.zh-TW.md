@@ -6,6 +6,8 @@
 
 舊名 vault-search。
 
+**相關工具：**[textbook-to-note](https://github.com/drpwchen/textbook-to-note) 與 [lecture-to-notes](https://github.com/drpwchen/lecture-to-notes) 產出這裡要搜尋的語料；[note-supplement](https://github.com/drpwchen/note-supplement) 把新素材補進你用它找到的筆記。
+
 三個工具，把你的 Obsidian vault 變成一個**可語意搜尋、可 AI 對話的知識庫**——而且完全跑在自己的電腦上。沒有雲端索引、搜尋時筆記不離開你的電腦、檢索不需要按次數付 API 費用。
 
 作者是一位醫師，為了從上千則臨床筆記中讀書而打造，但它**與領域無關**：指向任何一個放滿 markdown 筆記的 vault（研究、法律、工程、個人 wiki）都能用。
@@ -96,6 +98,8 @@ Obsidian 內建搜尋是字面比對——它找你打的字。但你幾個月�
 
 ## 先備條件
 
+**費用：**搜尋不用花錢。Embedding 與 Vault 模式對話都在本機跑 Ollama；唯一選用的花費是你可能已經在付的 Claude 訂閱（Hybrid／Free 對話用）。
+
 | 需求 | 說明 |
 |---|---|
 | **Python 3.10+** | 跑 server 用。 |
@@ -132,6 +136,8 @@ python indexer.py            # 建索引（之後執行為增量）
 ```
 
 若還沒拉模型，先 `ollama pull bge-m3`（見[先備條件](#先備條件)）。接著從下面兩個前端擇一或都裝。
+
+> 🧋 省了你時間的話，[請我喝杯飲料](https://drpwchen.com/support/)。
 
 ### `vault-search-obsidian` — Obsidian plugin
 
@@ -317,6 +323,17 @@ python graph_builder.py --ner      # 選用：scispaCy/NER 實體抽取
 
 ---
 
+## 限制
+
+- Embedding 需要本機執行 Ollama，沒有內建雲端 embedder（想換的話，embedding 呼叫都集中在 `indexer.py` / `api_server.py`）。
+- Obsidian 外掛是連到本機 API server，搜尋時那個 server 必須在跑。
+- 超大 vault 在純 CPU 上建索引很慢；索引建好之後搜尋很快。
+- Vault 模式對話的品質取決於你選的本機模型；Hybrid／Free 對話需要 `claude` CLI。
+- 它只搜尋你建過索引的內容，不負責取得或轉換教科書與演講（見上面的相關工具）。
+- 為了相容，環境變數（`VAULT_SEARCH_*`）、MCP server／tool 名稱與 `~/.vault-search` 仍沿用舊名 vault-search。
+
+---
+
 ## 專案結構
 
 ```
@@ -348,8 +365,7 @@ Obsidian plugin 的版號寫在 `plugin/manifest.json`，只有 `plugin/` 裡真
 
 MIT — 見 [LICENSE](./LICENSE)。歡迎 PR 與 issue。
 
-## 🧋 支持
+## Support 支持
 
-如果這個工具幫你省下時間，歡迎請我喝杯珍奶，讓伺服器繼續轉下去 🧡
-
-<a href="https://drpwchen.bobaboba.me"><img src="https://s3.ap-southeast-1.amazonaws.com/media.anyonelab.com/images/boba/boba-embed-icon.png" height="36" alt="boba icon" align="middle"> <img src="https://img.shields.io/badge/BUY_ME_A_BOBA-F8E0BE?style=for-the-badge" height="36" alt="BUY ME A BOBA" align="middle"></a>
+覺得這個工具有幫助嗎？歡迎[請我喝飲料](https://drpwchen.com/support/) 🧋
+If this tool helped you, you can [buy me a drink](https://drpwchen.com/en/support/).

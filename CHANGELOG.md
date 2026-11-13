@@ -8,6 +8,14 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [3.3.1] — 2026-11-14 — Docs: README quality pass
+
+### Docs
+- README (EN and zh-TW): support line after the install steps, a Cost line under Prerequisites, a related-tools line, a Limitations section; the old bobaboba footer replaced by the standard Support section.
+- Added `SECURITY.md`.
+- README（英文與繁中）：安裝步驟後加支持連結、先備條件加費用說明、新增相關工具與「限制」段落；舊的 bobaboba 頁尾換成標準 Support 段落。
+- 新增 `SECURITY.md`。
+
 ## [3.3.0] — 2026-11-14 — ask-your-library: corpus folders with one command; reference chapters stay out of the v3 index
 
 First public release since 2.9.1; it also carries 2.10.0–3.2.0 (sections below), which were

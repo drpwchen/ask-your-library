@@ -6,6 +6,8 @@
 
 Formerly *vault-search*.
 
+**Related tools:** [textbook-to-note](https://github.com/drpwchen/textbook-to-note) and [lecture-to-notes](https://github.com/drpwchen/lecture-to-notes) produce the corpora this searches; [note-supplement](https://github.com/drpwchen/note-supplement) merges new material into notes you found with it.
+
 Three tools that turn your Obsidian vault into a **semantically searchable, AI-chattable knowledge base** — running entirely on your own machine. No cloud indexing, no notes leaving your computer for search, no per-query API bill for retrieval.
 
 Built by a physician to study from a vault of thousands of clinical notes, but **domain-agnostic**: point it at any vault of markdown notes (research, law, engineering, a personal wiki) and it works.
@@ -104,6 +106,8 @@ The design priority is **local-first and private**:
 | **Claude CLI** *(optional)* | Only for Hybrid/Free chat. Vault-mode chat uses a local model instead. |
 | **A machine that stays on** *(optional)* | If you want search/chat available to your phone or other devices, run the server on an always-on PC/NAS. For single-machine use, just start it when you open Obsidian. |
 
+**Cost:** nothing to pay for search. Embeddings and Vault-mode chat run locally on Ollama; the only optional spend is the Claude subscription you may already have, used by Hybrid/Free chat.
+
 Pull the embedding model once:
 
 ```bash
@@ -132,6 +136,8 @@ python indexer.py            # build the index (incremental on later runs)
 ```
 
 `ollama pull bge-m3` first if you haven't (see [Prerequisites](#prerequisites)). Now pick one or both front-ends below.
+
+> 🧋 Saved you some time? [Buy me a drink](https://drpwchen.com/en/support/).
 
 ### `vault-search-obsidian` — the Obsidian plugin
 
@@ -317,6 +323,17 @@ Want a cloud embedder instead of Ollama? The embedding call is isolated in `inde
 
 ---
 
+## Limitations
+
+- It needs Ollama running locally for embeddings; there is no built-in cloud embedder (the embedding call is isolated in `indexer.py` / `api_server.py` if you want to swap one in).
+- The Obsidian plugin talks to a local API server, so that server has to be running while you search.
+- Indexing a very large vault on CPU is slow; search itself is fast once the index exists.
+- Vault-mode chat is only as good as the local model you pick; Hybrid/Free chat needs the `claude` CLI.
+- It searches what you index. It does not fetch or convert textbooks and lectures itself (see the related tools above).
+- For compatibility, env vars (`VAULT_SEARCH_*`), MCP server/tool names and `~/.vault-search` keep the old *vault-search* name.
+
+---
+
 ## Repository layout
 
 ```
@@ -348,11 +365,10 @@ Built by **Dr. P.W. Chen** — a physician who needed to actually find things in
 
 MIT — see [LICENSE](./LICENSE). Contributions and issues welcome.
 
-## 🧋 Support
+## Support 支持
 
-If this tool saves you time, you can buy me a boba — it keeps the servers running 🧡
-
-<a href="https://drpwchen.bobaboba.me"><img src="https://s3.ap-southeast-1.amazonaws.com/media.anyonelab.com/images/boba/boba-embed-icon.png" height="36" alt="boba icon" align="middle"> <img src="https://img.shields.io/badge/BUY_ME_A_BOBA-F8E0BE?style=for-the-badge" height="36" alt="BUY ME A BOBA" align="middle"></a>
+覺得這個工具有幫助嗎？歡迎[請我喝飲料](https://drpwchen.com/support/) 🧋
+If this tool helped you, you can [buy me a drink](https://drpwchen.com/en/support/).
 
 ---
 
