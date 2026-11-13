@@ -289,6 +289,21 @@ def chunk_file(content: str, ctx: FileContext, settings: Settings | None = None,
     m = ctx.manifest
     mrel = ctx.manifest_rel or ctx.rel_file
     entry = P.file_entry(m, mrel)
+
+    # A chapter FILE named "References" with no manifest kind (guidelines have no
+    # manifest; their "REFERENCES" is a plain text line, not a # heading, and wrapped
+    # citations stay under the per-child density threshold). 2026-11-13: 1,119 such
+    # rows across 31 files were indexed, three of them in one T1 top-5. Cut from the
+    # heading line to EOF; body text before it (a split landing mid-page) is kept.
+    # No heading line found -> keep the file: losing body text is worse than a leak.
+    if (not settings.keep_references
+            and (ctx.file_kind or entry.get("kind") or "") in ("", "body")
+            and P.is_reference_title(P.title_from_filename(ctx.rel_file))):
+        cut = P.reference_heading_offset(content)
+        if cut is not None:
+            content = content[:cut]
+            stats.reference_parents_dropped += 1
+
     initial = int(entry.get("pdf_page_start") or 0)
     lines = P.line_table(content, initial_page=initial)
     units = T.find_table_units(lines)

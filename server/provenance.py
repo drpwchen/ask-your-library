@@ -215,7 +215,7 @@ def strip_watermarks(text: str) -> tuple[str, int]:
 
 REFERENCE_TITLE_RE = re.compile(
     r"^\s*(?:\d+(?:\.\d+)*\s*)?(?:references?|bibliography|suggested\s+readings?|"
-    r"further\s+readings?|literature\s+cited|selected\s+references|參考文獻|参考文献)\s*[:.]?\s*$",
+    r"further\s+readings?|literature\s+cited|select(?:ed)?\s+references|參考文獻|参考文献)\s*[:.]?\s*$",
     re.IGNORECASE,
 )
 
@@ -234,8 +234,30 @@ def norm_title(s: str) -> str:
     return s
 
 
+_ZERO_WIDTH_RE = re.compile("[\u200b-\u200d\u2060\ufeff]")
+
+
 def is_reference_title(title: str) -> bool:
-    return bool(REFERENCE_TITLE_RE.match(title or ""))
+    # Zero-width joiners inside a word ("Refer\u200c\u200cences", Rinaldi 2023) must not hide it.
+    return bool(REFERENCE_TITLE_RE.match(_ZERO_WIDTH_RE.sub("", title or "")))
+
+
+def title_from_filename(rel_file: str) -> str:
+    """'_Guidelines/X/ch74_REFERENCES.md' -> 'REFERENCES' (chapter prefix and underscores dropped)."""
+    stem = re.sub(r"\.md$", "", (rel_file or "").replace("\\", "/").rsplit("/", 1)[-1], flags=re.I)
+    stem = re.sub(r"^(?:ch|pages?_)[0-9a-z]*?_", "", stem, flags=re.I)
+    return stem.replace("_", " ").strip()
+
+
+def reference_heading_offset(content: str) -> int | None:
+    """Character offset of the first line that is nothing but a References-type heading
+    (markdown ``#`` optional — guideline PDFs carry it as a plain text line), else None."""
+    pos = 0
+    for line in (content or "").split("\n"):
+        if is_reference_title(line.lstrip("#").strip()):
+            return pos
+        pos += len(line) + 1
+    return None
 
 
 def citation_density(text: str) -> float:

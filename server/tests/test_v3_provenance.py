@@ -255,6 +255,42 @@ def test_references_section_and_file_are_dropped(tmp_path):
     assert any(k["section_kind"] == "references" for k in kids3)
 
 
+def test_reference_named_file_without_manifest_is_cut_at_plain_heading():
+    # Guideline shape: no manifest, "REFERENCES" is a plain line, citations wrap so
+    # per-line density stays low. Body before the heading must survive.
+    wrapped = "\n".join(f"{i}. Doe J, Roe K. A long title that wraps onto\nthe next line. Some Journal "
+                        f"of Things, vol {i}." for i in range(20))
+    doc = f"<!-- page 65 -->\nDisclosure {words(40)}\nREFERENCES \n \n{wrapped}\n"
+    s = C.Settings(child_overlap=0, min_child_tokens=1)
+    ctx = _ctx(book="_Guidelines", rel_file="_Guidelines/AAOS_X_2025/ch74_REFERENCES.md")
+    _, kids, st = C.chunk_file(doc, ctx, s, TOK)
+    assert kids and all("Doe J" not in k["text"] for k in kids)
+    assert any("Disclosure" in k["core_text"] for k in kids)
+    assert st.reference_parents_dropped == 1
+    # zero-width joiners inside the heading and "Select References" spelling
+    doc2 = f"<!-- page 3 -->\n{words(40)}\nRefer‌‌ences\n{wrapped}\n"
+    ctx2 = _ctx(rel_file="Book_2e/ch11_Select_References.md")
+    _, kids2, _ = C.chunk_file(doc2, ctx2, s, TOK)
+    assert kids2 and all("Doe J" not in k["text"] for k in kids2)
+    # no heading line found -> file kept whole (body loss is worse than a leak)
+    _, kids3, _ = C.chunk_file(f"<!-- page 3 -->\n{words(40)}\n{wrapped}\n", ctx2, s, TOK)
+    assert any("Doe J" in k["text"] for k in kids3)
+    # an ordinary chapter file with a plain "References" line is untouched by this rule
+    _, kids4, _ = C.chunk_file(doc, _ctx(), s, TOK)
+    assert any("Doe J" in k["text"] for k in kids4)
+    # --keep-references disables it
+    _, kids5, _ = C.chunk_file(doc, ctx, C.Settings(child_overlap=0, min_child_tokens=1,
+                                                    keep_references=True), TOK)
+    assert any("Doe J" in k["text"] for k in kids5)
+
+
+def test_title_from_filename():
+    assert P.title_from_filename("_Guidelines/A/ch74_REFERENCES.md") == "REFERENCES"
+    assert P.title_from_filename("B\\ch104_Suggested_Reading.md") == "Suggested Reading"
+    assert P.is_reference_title(P.title_from_filename("B/ch12a_Select_References.md"))
+    assert not P.is_reference_title(P.title_from_filename("B/ch02_Gait.md"))
+
+
 def test_deep_headings_fill_section_path():
     doc = f"# Book title\n<!-- page 4 -->\n## Epidemiology\n{words(40)}\n### Incidence\n{words(40, 'i')}\n"
     parents, kids, _ = C.chunk_file(doc, _ctx(), C.Settings(child_overlap=0, min_child_tokens=1,

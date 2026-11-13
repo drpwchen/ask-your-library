@@ -8,11 +8,25 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
-## [3.2.1] — 2026-11-13 — agent notes
+## [3.2.1] — 2026-11-13 — agent notes; reference chapters stay out of the v3 index
 
 ### Added
 - `AGENTS.md` (with a `CLAUDE.md` bridge): setup notes for coding agents — the `python-dotenv`
   requirement and the separate-deployment caveat.
+
+### Fixed
+- **v3 textbook indexer: a chapter file named like a reference list is no longer indexed
+  past its heading.** A file such as `ch74_REFERENCES.md` with no manifest kind (every
+  `_Guidelines/` source) slipped through all three filters: the heading is a plain text
+  line rather than `#`, and wrapped citations keep the per-child density under 0.6. On the
+  live corpus that was 1,119 rows across 31 files, three of them in a single top-5. Now,
+  when the file name reads References / Bibliography / Suggested or Further Reading /
+  Select(ed) References, the text is cut at the first line that is only that heading;
+  body text before it (a split that landed mid-page) is kept, and a file with no such
+  line is kept whole. `--keep-references` disables the cut. Rows already in an index
+  change only when that source is re-indexed (`--book`).
+- Reference headings are recognised through zero-width joiners inside the word and in
+  the "Select References" spelling.
 
 ## [3.2.0] — 2026-11-13 — opt-in hybrid retrieval and multi-section excerpts for the vault
 
