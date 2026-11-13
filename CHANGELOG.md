@@ -8,6 +8,27 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [3.2.0] — 2026-11-13 — opt-in hybrid retrieval and multi-section excerpts for the vault
+
+Both default OFF; with neither set, results are unchanged.
+
+### Added
+- **`VAULT_SEARCH_VAULT_RETRIEVAL=hybrid`**: v2 vault search fuses the vector
+  ranking with a full-text ranking (RRF), as `textbook_search` does, so an
+  exact term (an abbreviation, a test or drug name) can surface a note the
+  embedding ranks low. Full-text side reads `VAULT_SEARCH_VAULT_FTS_COLUMN`
+  (default `text`). `similarity` stays the cosine; the order follows the
+  fused score under the same folder / recency weights. Without an FTS index
+  LanceDB scans the text (slower, same answer); a search error falls back to
+  vector. The search log records `retrieval`, `retrieval_fallback` and
+  `sections_per_note`.
+- **`VAULT_SEARCH_VAULT_SECTIONS_PER_NOTE=k`**: a result quotes up to `k`
+  distinct sections of its note (best-matching first, the next ones in rank
+  order) instead of one, so an answer spread over a long note's sections
+  reaches the reader. Ranking is unchanged.
+- Both can also be set per call (`retrieval`, `sections_per_note` arguments;
+  not in the tool schema) for evaluation without a restart.
+
 ## [3.1.0] — 2026-11-13 — vault excerpts quote the whole matched section
 
 ### Changed

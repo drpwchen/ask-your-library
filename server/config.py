@@ -134,6 +134,17 @@ VAULT_SEARCH_LOG_PATH = _path(
 # excerpt for 8% of chat results and cut it for another 18%. Set 800 to go back.
 VAULT_EXCERPT_CHARS = int(os.environ.get("VAULT_SEARCH_VAULT_EXCERPT_CHARS", "0"))
 
+# v2 vault retrieval mode: "vector" (default) or "hybrid" (vector + full-text,
+# RRF), which needs a native FTS index on VAULT_FTS_COLUMN of vault_chunks_v2;
+# without one the search falls back to vector and logs why. Opt-in until
+# measured on the vault question set.
+VAULT_RETRIEVAL = os.environ.get("VAULT_SEARCH_VAULT_RETRIEVAL", "vector").lower()
+VAULT_FTS_COLUMN = os.environ.get("VAULT_SEARCH_VAULT_FTS_COLUMN", "text")
+# Distinct sections of one note quoted per result (1 = the best-matching
+# section only, the default). >1 appends the note's next-best sections to the
+# excerpt, so an answer spread over a long note's sections reaches the reader.
+VAULT_SECTIONS_PER_NOTE = int(os.environ.get("VAULT_SEARCH_VAULT_SECTIONS_PER_NOTE", "1"))
+
 # Instruction prefix prepended to every vault QUERY before embedding (Qwen3
 # instruct format). Documents are embedded WITHOUT it, so changing this changes
 # only how queries are phrased — never the stored vectors.

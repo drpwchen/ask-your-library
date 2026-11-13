@@ -96,6 +96,7 @@ from config import (
     TEXTBOOK_RETRIEVAL, TEXTBOOK_TABLE_SUFFIX,
     TEXTBOOK_RERANK, RERANK_POOL, RERANK_MAX_LENGTH, TEXTBOOK_DB_PATH,
     RERANK_GUIDELINE_PRIOR, RERANK_YEAR_PRIOR, VAULT_EXCERPT_CHARS,
+    VAULT_RETRIEVAL, VAULT_FTS_COLUMN, VAULT_SECTIONS_PER_NOTE,
 )
 import scope as S
 import books_meta
@@ -1333,8 +1334,17 @@ def _vault_retrieve_v1(query: str, folder: str | None, fetch_n: int,
 
 
 def _vault_retrieve_v2(query: str, folder: str | None, fetch_n: int,
-                       include_excerpt: bool, scope_where: str | None = None) -> list[dict]:
-    """v2 retrieval: vault_chunks_v2, child hit → parent text as the excerpt."""
+                       include_excerpt: bool, scope_where: str | None = None,
+                       retrieval: str = "vector", keep_ids: bool = False) -> list[dict]:
+    """v2 retrieval: vault_chunks_v2, child hit → parent text as the excerpt.
+
+    `retrieval="hybrid"` fuses the vector ranking with a full-text ranking on
+    VAULT_FTS_COLUMN (RRF), as textbook_search does; the fused score goes in
+    `_fused` and rows keep cosine `similarity`. A missing FTS index falls back
+    to vector and records why in `_fallback` on the first row. `keep_ids` adds
+    `_pid` (parent id) for callers that group sections; both are internal and
+    popped before anything leaves the server.
+    """
     chunks_table = get_vault_chunks_table()
     if chunks_table is None:
         raise RuntimeError(f"v2 index enabled but table '{VCHUNKS_TABLE}' is missing")
@@ -1351,11 +1361,31 @@ def _vault_retrieve_v2(query: str, folder: str | None, fetch_n: int,
     if s > 0:
         qe = [v / s for v in qe]
 
-    search_builder = chunks_table.search(qe).metric("cosine").limit(fetch_n)
     where = _folder_where(folder, scope_where)
-    if where:
-        search_builder = search_builder.where(where, prefilter=True)
-    df = search_builder.to_pandas()
+
+    def _search(mode: str):
+        if mode == "hybrid":
+            from lancedb.rerankers import RRFReranker
+            sb = (chunks_table.search(query_type="hybrid", fts_columns=VAULT_FTS_COLUMN)
+                  .vector(qe).text(query).distance_type("cosine")
+                  .rerank(RRFReranker()).limit(fetch_n))
+        else:
+            sb = chunks_table.search(qe).metric("cosine").limit(fetch_n)
+        if where:
+            sb = sb.where(where, prefilter=True)
+        return sb.to_pandas()
+
+    hybrid = str(retrieval).lower() == "hybrid"
+    fallback = None
+    if hybrid:
+        try:
+            df = _search("hybrid")
+        except Exception as e:  # noqa: BLE001 -- e.g. no FTS index on this table
+            fallback = f"hybrid: {type(e).__name__}: {str(e)[:160]}"
+            hybrid = False
+            df = _search("vector")
+    else:
+        df = _search("vector")
 
     formatted = []
     parent_seen: dict[str, int] = {}
@@ -1373,12 +1403,19 @@ def _vault_retrieve_v2(query: str, folder: str | None, fetch_n: int,
             "section": _clean(str(row.get("section_path", ""))),
             "folder": _clean(str(row.get("folder", ""))),
             "tags": _clean(str(row.get("tags", ""))),
-            "similarity": round(max(0, 1 - float(row.get("_distance", 0))), 4),
+            "similarity": (_row_similarity(row, qe) if hybrid
+                           else round(max(0, 1 - float(row.get("_distance", 0))), 4)),
             "mtime": float(row["mtime"]) if row.get("mtime") is not None else None,
         }
+        if hybrid:
+            entry["_fused"] = float(row.get("_relevance_score", 0) or 0)
+        if keep_ids:
+            entry["_pid"] = pid
         if include_excerpt:
             pending.append((entry, pid, str(row.get("text", ""))))
         formatted.append(entry)
+    if fallback and formatted:
+        formatted[0]["_fallback"] = fallback
 
     if pending:
         parent_rows = fetch_vault_parents([pid for _, pid, _ in pending])
@@ -1436,6 +1473,13 @@ def _vault_search_raw(arguments: dict, ctx: dict | None = None) -> dict:
     include_excerpt = arguments.get("include_excerpt", False)
     exclude_cowork = bool(arguments.get("exclude_cowork", True))
     sc, smap, scope_where = resolve_scope(arguments)
+    # Not in the tool schema: server defaults from config, overridable per call
+    # (the eval harness compares settings without restarting the server).
+    retrieval = str(arguments.get("retrieval") or VAULT_RETRIEVAL).lower()
+    try:
+        k_sections = max(1, int(arguments.get("sections_per_note") or VAULT_SECTIONS_PER_NOTE))
+    except (TypeError, ValueError):
+        k_sections = 1
 
     use_v2 = vault_v2_active()
     fallback_reason = None
@@ -1443,7 +1487,8 @@ def _vault_search_raw(arguments: dict, ctx: dict | None = None) -> dict:
         try:
             # v2 needs more dedup room: child chunks are denser, so a given
             # number of hits covers fewer distinct notes.
-            formatted = _vault_retrieve_v2(query, folder, min(n * 10, 150), include_excerpt, scope_where)
+            formatted = _vault_retrieve_v2(query, folder, min(n * 10, 150), include_excerpt, scope_where,
+                                           retrieval=retrieval, keep_ids=k_sections > 1)
         except Exception as e:
             # v2 index missing or broken → serve v1 rather than fail the
             # call. Recorded in the log so a silent downgrade stays visible.
@@ -1468,22 +1513,41 @@ def _vault_search_raw(arguments: dict, ctx: dict | None = None) -> dict:
             and not _is_cowork_path(r.get("folder", ""))
         ]
 
-    # Deduplicate by note name, keeping highest similarity
-    seen_notes = {}
+    retrieval_fallback = formatted[0].pop("_fallback", None) if formatted else None
+    fused = any("_fused" in r for r in formatted)
+
+    # Deduplicate by note name, keeping highest similarity. With
+    # sections_per_note > 1 a note keeps its first hit as the result and the
+    # next distinct sections (in rank order) are appended to its excerpt.
+    seen_notes: dict[str, dict] = {}
     deduped = []
     for r in formatted:
         note = r["note"]
-        if note not in seen_notes:
-            seen_notes[note] = True
+        first = seen_notes.get(note)
+        if first is None:
+            seen_notes[note] = r
+            r["_sections"] = [r.get("_pid")]
             deduped.append(r)
+        elif (k_sections > 1 and len(first["_sections"]) < k_sections
+              and r.get("_pid") not in first["_sections"]):
+            first["_sections"].append(r.get("_pid"))
+            if include_excerpt and r.get("excerpt"):
+                first["excerpt"] = (first.get("excerpt", "")
+                                    + f"\n\n[{r.get('section', '')}]\n" + r["excerpt"])
+    for r in deduped:
+        r.pop("_sections", None)
+        r.pop("_pid", None)
 
-    # Rerank with path + recency + relation weighting
+    # Rerank with path + recency + relation weighting. A hybrid ranking is
+    # ordered by its fused (RRF) score under the same weights; `similarity`
+    # stays the cosine either way.
     boost_recent = arguments.get("boost_recent", True)
     include_archived = arguments.get("include_archived", False)
     graph = get_graph()
     graph_relations = graph.get("extracted_relations", [])
     deduped = rerank(deduped, boost_recent=boost_recent, include_archived=include_archived,
-                     query=query, graph_relations=graph_relations)
+                     query=query, graph_relations=graph_relations,
+                     rank_key="_fused" if fused else None)
 
     # Trim to requested n after dedup + rerank
     deduped = deduped[:n]
@@ -1538,6 +1602,9 @@ def _vault_search_raw(arguments: dict, ctx: dict | None = None) -> dict:
         "embedding_model": VAULT_V2_MODEL if use_v2 else EMBEDDING_MODEL,
         "query_template_version": VAULT_QUERY_TEMPLATE_VERSION if use_v2 else "v1-noprefix",
         "v2_fallback_reason": fallback_reason,
+        "retrieval": ("hybrid" if fused else "vector") if use_v2 else "v1",
+        "retrieval_fallback": retrieval_fallback,
+        "sections_per_note": k_sections,
         "top_score": round(top_score, 4),
         "score_gap_top1_top2": round(score_gap, 4),
         "score_std_topN": round(score_std, 4),
