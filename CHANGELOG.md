@@ -10,6 +10,10 @@ so it deliberately does not track these tags.
 
 ## [3.2.1] — 2026-11-13 — corpus folders with one command; reference chapters stay out of the v3 index
 
+vault-search is now **ask-your-library** (`drpwchen/ask-your-library`); README, AGENTS.md, docs and the plugin
+description use the new name. Env vars (`VAULT_SEARCH_*`), MCP server/tool names, the plugin id and
+`~/.vault-search` are unchanged.
+
 ### Added
 - **Corpus folder format `t2n-corpus/1`** (`docs/corpus-format.md`): the one specification of
   how textbooks, guidelines and lectures reach vault-search — a `corpus.json` marker

@@ -1,6 +1,10 @@
-# Obsidian Vault Search — a local-first semantic search trio
+# ask-your-library
 
 > **English** · [繁體中文](./README.zh-TW.md)
+
+**Ask your own library — textbooks, guidelines, lecture notes and your notes — and get answers that cite the page.** Local-first search hub with an MCP server for Claude Code and an Obsidian plugin.
+
+Formerly *vault-search*.
 
 Three tools that turn your Obsidian vault into a **semantically searchable, AI-chattable knowledge base** — running entirely on your own machine. No cloud indexing, no notes leaving your computer for search, no per-query API bill for retrieval.
 
@@ -115,8 +119,8 @@ ollama pull gemma2:9b
 ### Step 0 — shared core (do this once, for either front-end)
 
 ```bash
-git clone https://github.com/drpwchen/vault-search.git
-cd vault-search
+git clone https://github.com/drpwchen/ask-your-library.git
+cd ask-your-library
 pip install -r requirements.txt
 
 cp env.example .env          # then edit .env — set VAULT_PATH to your vault
@@ -184,7 +188,7 @@ Everything is driven by environment variables (see **`env.example`** for the ful
 
 ## Add a corpus (textbooks, guidelines, lectures)
 
-Reference material reaches vault-search as a **corpus folder**: plain folders of Markdown laid out as [`docs/corpus-format.md`](docs/corpus-format.md) describes (format `t2n-corpus/1`). [textbook-to-note](https://github.com/drpwchen/textbook-to-note) writes one from PDF textbooks and guidelines, [lecture-to-notes](https://github.com/drpwchen/lecture-to-notes) from recorded lectures, and any script of your own can. One command makes it searchable:
+Reference material reaches ask-your-library as a **corpus folder**: plain folders of Markdown laid out as [`docs/corpus-format.md`](docs/corpus-format.md) describes (format `t2n-corpus/1`). [textbook-to-note](https://github.com/drpwchen/textbook-to-note) writes one from PDF textbooks and guidelines, [lecture-to-notes](https://github.com/drpwchen/lecture-to-notes) from recorded lectures, and any script of your own can. One command makes it searchable:
 
 ```bash
 ollama pull qwen3-embedding:0.6b                  # embedding model for corpora (a GPU is optional)

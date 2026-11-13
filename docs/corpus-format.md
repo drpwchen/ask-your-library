@@ -1,9 +1,9 @@
 # Corpus folder format — `t2n-corpus/1`
 
-A **corpus folder** is how reference material reaches vault-search. A producer
+A **corpus folder** is how reference material reaches ask-your-library. A producer
 (e.g. [textbook-to-note](https://github.com/drpwchen/textbook-to-note) for textbooks and
 guidelines, [lecture-to-notes](https://github.com/drpwchen/lecture-to-notes) for lectures,
-or your own script) writes Markdown into a folder laid out as below; vault-search makes it
+or your own script) writes Markdown into a folder laid out as below; ask-your-library makes it
 searchable with one command:
 
 ```bash

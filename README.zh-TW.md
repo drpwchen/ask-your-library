@@ -1,6 +1,10 @@
-# Obsidian Vault Search — 地端優先的語意搜尋三套組
+# ask-your-library
 
 > [English](./README.md) · **繁體中文**
+
+**問你自己的書庫——教科書、指引、演講筆記和你自己的筆記——得到標明頁碼出處的答案。** 地端優先的搜尋中樞，附 Claude Code 用的 MCP server 與 Obsidian 外掛。
+
+舊名 vault-search。
 
 三個工具，把你的 Obsidian vault 變成一個**可語意搜尋、可 AI 對話的知識庫**——而且完全跑在自己的電腦上。沒有雲端索引、搜尋時筆記不離開你的電腦、檢索不需要按次數付 API 費用。
 
@@ -115,8 +119,8 @@ ollama pull gemma2:9b
 ### Step 0 — 共用核心（只做一次，兩個前端都需要）
 
 ```bash
-git clone https://github.com/drpwchen/vault-search.git
-cd vault-search
+git clone https://github.com/drpwchen/ask-your-library.git
+cd ask-your-library
 pip install -r requirements.txt
 
 cp env.example .env          # 然後編輯 .env——把 VAULT_PATH 設成你的 vault 路徑
@@ -184,7 +188,7 @@ claude mcp add vault-search -- python "/abs/path/to/server/mcp_thin.py"
 
 ## 加入一份語料（教科書、指引、演講）
 
-參考資料以**語料資料夾**的形式進入 vault-search：就是一般資料夾加 Markdown，排法照 [`docs/corpus-format.md`](docs/corpus-format.md)（格式 `t2n-corpus/1`）。[textbook-to-note](https://github.com/drpwchen/textbook-to-note) 從 PDF 教科書與指引產生，[lecture-to-notes](https://github.com/drpwchen/lecture-to-notes) 從演講錄影產生，你自己的腳本也可以。一行指令就能搜：
+參考資料以**語料資料夾**的形式進入 ask-your-library：就是一般資料夾加 Markdown，排法照 [`docs/corpus-format.md`](docs/corpus-format.md)（格式 `t2n-corpus/1`）。[textbook-to-note](https://github.com/drpwchen/textbook-to-note) 從 PDF 教科書與指引產生，[lecture-to-notes](https://github.com/drpwchen/lecture-to-notes) 從演講錄影產生，你自己的腳本也可以。一行指令就能搜：
 
 ```bash
 ollama pull qwen3-embedding:0.6b                  # 語料用的 embedding 模型（GPU 非必要）
