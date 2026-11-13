@@ -121,9 +121,11 @@ ollama pull gemma2:9b
 ```bash
 git clone https://github.com/drpwchen/ask-your-library.git
 cd ask-your-library
+python -m venv .venv
+source .venv/bin/activate    # Windows：.venv\Scripts\activate
 pip install -r requirements.txt
 
-cp env.example .env          # 然後編輯 .env——把 VAULT_PATH 設成你的 vault 路徑
+cp env.example .env          # 然後編輯 .env——取消 VAULT_PATH 的註解，設成你的 vault 路徑
 
 cd server
 python indexer.py            # 建索引（之後執行為增量）
@@ -151,8 +153,13 @@ cp -r plugin "<你的VAULT>/.obsidian/plugins/vault-search-plugin"
 不需要 Obsidian、不需要 API server——直接拿 Step 0 建好的索引註冊 MCP server：
 
 ```bash
-claude mcp add vault-search -- python "/abs/path/to/server/mcp_server.py"
+# macOS / Linux
+claude mcp add vault-search -- /abs/path/to/ask-your-library/.venv/bin/python /abs/path/to/ask-your-library/server/mcp_server.py
+# Windows
+claude mcp add vault-search -- C:\path\to\ask-your-library\.venv\Scripts\python.exe C:\path\to\ask-your-library\server\mcp_server.py
 ```
+
+要填 **Step 0 那個 venv 裡 Python 的絕對路徑**（在啟用的 venv 裡跑 `python -c "import sys; print(sys.executable)"` 就會印出來）。MCP client 是自己啟動 server、不經過你的 shell：那裡的 `python` 可能是另一個沒裝 `lancedb` 的直譯器，server 就會連不上。
 
 之後 Claude Code（或任何 MCP client）就能呼叫 `vault_search`、`vault_similar`、`vault_stats`，以及（若你有索引參考語料）`textbook_search`，全部背後共用同一份地端索引、Personalized PageRank 擴展與重新排序。
 
@@ -160,7 +167,7 @@ claude mcp add vault-search -- python "/abs/path/to/server/mcp_server.py"
 
 ```bash
 python server/api_server.py                                  # 必須是啟動狀態
-claude mcp add vault-search -- python "/abs/path/to/server/mcp_thin.py"
+claude mcp add vault-search -- /abs/path/to/ask-your-library/.venv/bin/python /abs/path/to/ask-your-library/server/mcp_thin.py
 ```
 
 工具、參數、輸出完全相同——API server 轉進去的是 standalone MCP server 用的同一個 `handle_tool_call()`。代價是 API server 必須活著；它若掛掉，client 仍然啟動得起來（會拿上一次快取的工具 schema），工具呼叫則回一段看得懂的錯誤訊息，而不是讓整個 session 死掉。
@@ -169,11 +176,11 @@ claude mcp add vault-search -- python "/abs/path/to/server/mcp_thin.py"
 
 ## 設定
 
-一切都由環境變數驅動（完整註解清單見 **`env.example`**）。唯一必填的是 `VAULT_PATH`。重點：
+一切都由環境變數驅動（完整註解清單見 **`env.example`**）。沒有必填項：`VAULT_PATH` 只有要搜你的筆記時才需要，只用語料可以不設。重點：
 
 | 變數 | 預設 | 用途 |
 |---|---|---|
-| `VAULT_PATH` | —（必填） | vault 的絕對路徑。 |
+| `VAULT_PATH` | —（不設＝只用語料） | vault 的絕對路徑。 |
 | `VAULT_SEARCH_DATA_DIR` | `~/.vault-search` | 索引／快取／log 存放處。 |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama 端點。 |
 | `VAULT_SEARCH_EMBEDDING_MODEL` | `bge-m3` | vault embedding 模型。 |
@@ -209,6 +216,8 @@ VAULT_SEARCH_TEXTBOOK_DB_PATH=/home/you/.vault-search/textbook_db
 - **演講**：每門課一個資料夾、附 `_meta.md`，每個條目以 H1 開頭、接一行 `Source: YYYY-MM-DD 講者《課名》· …`——見[格式第 4 節](docs/corpus-format.md#4-kind-lecture)。
 
 先拿內附的範例試：`python server/corpus.py add examples/corpus-fixture/textbook --db /tmp/fixture_db`。
+
+**只用語料、沒有 Obsidian vault。** 其他都不必設：跳過 `indexer.py`，`VAULT_PATH` 不要設。最小設定就是 Step 0 的 venv、`ollama pull qwen3-embedding:0.6b`、`corpus.py add`，再把它印出的那一行放進 `.env`（只有這一行的新檔即可，或用 export）。照[上面](#vault-search-mcp--在-claude-code或任何-mcp-client中使用)用 venv 的 Python 註冊 MCP server；`textbook_search`／`lecture_search` 可以用，`vault_*` 工具會回「No vault configured — set VAULT_PATH …」。
 
 ---
 

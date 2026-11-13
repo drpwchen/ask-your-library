@@ -418,6 +418,8 @@ def _count_table(db) -> int:
 
 
 if __name__ == "__main__":
+    from config import require_vault_path
+    require_vault_path()
     parser = argparse.ArgumentParser(description="Index Obsidian vault into LanceDB")
     parser.add_argument("--incremental", action="store_true",
                         help="Only re-index new/modified files")

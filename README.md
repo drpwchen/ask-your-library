@@ -121,9 +121,11 @@ ollama pull gemma2:9b
 ```bash
 git clone https://github.com/drpwchen/ask-your-library.git
 cd ask-your-library
+python -m venv .venv
+source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-cp env.example .env          # then edit .env — set VAULT_PATH to your vault
+cp env.example .env          # then edit .env — uncomment VAULT_PATH and point it at your vault
 
 cd server
 python indexer.py            # build the index (incremental on later runs)
@@ -151,8 +153,13 @@ In Obsidian: **Settings → Community plugins → enable "Vault Semantic Search"
 No Obsidian, no API server — just register the MCP server against the index you built in Step 0:
 
 ```bash
-claude mcp add vault-search -- python "/abs/path/to/server/mcp_server.py"
+# macOS / Linux
+claude mcp add vault-search -- /abs/path/to/ask-your-library/.venv/bin/python /abs/path/to/ask-your-library/server/mcp_server.py
+# Windows
+claude mcp add vault-search -- C:\path\to\ask-your-library\.venv\Scripts\python.exe C:\path\to\ask-your-library\server\mcp_server.py
 ```
+
+Give the **absolute path of the Python in the venv from Step 0** (`python -c "import sys; print(sys.executable)"` inside the activated venv prints it). The MCP client starts the server itself, outside your shell: a bare `python` there can be another interpreter without `lancedb`, and the server then fails to connect.
 
 Now Claude Code (or any MCP client) can call `vault_search`, `vault_similar`, `vault_stats`, and — if you indexed a reference corpus — `textbook_search`, all backed by the same local index, Personalized-PageRank expansion, and reranking.
 
@@ -160,7 +167,7 @@ Now Claude Code (or any MCP client) can call `vault_search`, `vault_similar`, `v
 
 ```bash
 python server/api_server.py                                  # must be running
-claude mcp add vault-search -- python "/abs/path/to/server/mcp_thin.py"
+claude mcp add vault-search -- /abs/path/to/ask-your-library/.venv/bin/python /abs/path/to/ask-your-library/server/mcp_thin.py
 ```
 
 Same tools, same arguments, same output — the API server dispatches to the very same `handle_tool_call()` the standalone MCP server uses. The trade-off is that the API server must be up; if it is down, the client still starts (it serves the last cached tool schema) and tool calls return a readable error instead of killing your session.
@@ -169,11 +176,11 @@ Same tools, same arguments, same output — the API server dispatches to the ver
 
 ## Configuration
 
-Everything is driven by environment variables (see **`env.example`** for the full annotated list). The only required one is `VAULT_PATH`. Highlights:
+Everything is driven by environment variables (see **`env.example`** for the full annotated list). None is required: `VAULT_PATH` is needed only to search your notes, and a corpus-only install runs without it. Highlights:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VAULT_PATH` | — *(required)* | Absolute path to your vault. |
+| `VAULT_PATH` | — *(unset = corpus only)* | Absolute path to your vault. |
 | `VAULT_SEARCH_DATA_DIR` | `~/.vault-search` | Where indexes/caches/logs live. |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint. |
 | `VAULT_SEARCH_EMBEDDING_MODEL` | `bge-m3` | Vault embedding model. |
@@ -209,6 +216,8 @@ Put that line in `.env` and restart `api_server.py` (and start a new MCP session
 - **Lectures**: one folder per course with a `_meta.md`, and entries that start with an H1 and a `Source: YYYY-MM-DD Speaker《Course title》· …` line — see [§4 of the format](docs/corpus-format.md#4-kind-lecture).
 
 Try it on the bundled fixtures: `python server/corpus.py add examples/corpus-fixture/textbook --db /tmp/fixture_db`.
+
+**Corpus only, no Obsidian vault.** Nothing else is required: skip `indexer.py` and leave `VAULT_PATH` unset. The minimal setup is the venv from Step 0, `ollama pull qwen3-embedding:0.6b`, `corpus.py add`, and the one line it prints in `.env` (create the file with just that line, or export it). Register the MCP server with the venv's Python as [above](#vault-search-mcp--use-it-from-claude-code-or-any-mcp-client); `textbook_search` / `lecture_search` answer, and the `vault_*` tools reply "No vault configured — set VAULT_PATH …".
 
 ---
 

@@ -909,6 +909,8 @@ def reconcile_error_log(error_log: dict, hash_cache: dict, indexed_files: set,
 
 
 def main():
+    from config import require_vault_path
+    require_vault_path()
     p = argparse.ArgumentParser(description="Vault indexer v2 (parent-child chunking)")
     p.add_argument("--reconcile-errors", action="store_true",
                    help="Close error-log entries for files that are already fully indexed "

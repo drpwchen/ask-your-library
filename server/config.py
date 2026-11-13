@@ -6,7 +6,9 @@ Central configuration for vault-search.
 
 Every path, model name, and tunable is resolved here from environment variables,
 with sensible defaults. Set them in a `.env` file (auto-loaded if python-dotenv is
-installed) or export them in your shell. The ONLY value you must set is VAULT_PATH.
+installed) or export them in your shell. VAULT_PATH points at your Obsidian vault;
+leave it unset for a corpus-only install (textbook_search / lecture_search work,
+the vault_* tools say no vault is configured, the vault indexers refuse to run).
 
 See `.env.example` in the repo root for the full list.
 """
@@ -66,15 +68,25 @@ DATA_DIR = _path("VAULT_SEARCH_DATA_DIR", "~/.vault-search")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- Vault ------------------------------------------------------------------
-# REQUIRED: absolute path to your Obsidian vault (the folder holding your .md notes).
+# Absolute path to your Obsidian vault (the folder holding your .md notes).
+# Optional: without it the server serves the corpus tools only.
 VAULT_PATH = _path("VAULT_PATH", None)
-if VAULT_PATH is None:
-    raise RuntimeError(
-        "VAULT_PATH is not set. Point it at your Obsidian vault, e.g.\n"
-        "  export VAULT_PATH=/home/you/Documents/MyVault   (Linux/macOS)\n"
-        '  setx VAULT_PATH "C:\\Users\\you\\Documents\\MyVault"  (Windows)\n'
-        "or put it in a .env file in the repo root."
-    )
+VAULT_PATH_MISSING = (
+    "VAULT_PATH is not set. Point it at your Obsidian vault, e.g.\n"
+    "  export VAULT_PATH=/home/you/Documents/MyVault   (Linux/macOS)\n"
+    '  setx VAULT_PATH "C:\\Users\\you\\Documents\\MyVault"  (Windows)\n'
+    "or put it in a .env file in the repo root."
+)
+NO_VAULT_MESSAGE = ("No vault configured — set VAULT_PATH to your Obsidian vault (see env.example) "
+                    "and restart the server. textbook_search / lecture_search work without it.")
+
+
+def require_vault_path() -> Path:
+    """For the vault indexers / graph builder: stop with the full setup message."""
+    if VAULT_PATH is None:
+        raise SystemExit(VAULT_PATH_MISSING)
+    return VAULT_PATH
+
 
 # Top-level folders never indexed (attachments, templates, system folders, etc.)
 SKIP_FOLDERS = set(_csv(

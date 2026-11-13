@@ -97,6 +97,7 @@ from config import (
     TEXTBOOK_RERANK, RERANK_POOL, RERANK_MAX_LENGTH, TEXTBOOK_DB_PATH,
     RERANK_GUIDELINE_PRIOR, RERANK_YEAR_PRIOR, VAULT_EXCERPT_CHARS,
     VAULT_RETRIEVAL, VAULT_FTS_COLUMN, VAULT_SECTIONS_PER_NOTE,
+    VAULT_PATH, NO_VAULT_MESSAGE,
 )
 import scope as S
 import books_meta
@@ -1467,6 +1468,8 @@ def _vault_search_raw(arguments: dict, ctx: dict | None = None) -> dict:
     Shared by the MCP tool and the chat context builder so both see the same
     ranking. Raises NoVaultIndex / ScopeRefused.
     """
+    if VAULT_PATH is None:
+        raise NoVaultIndex(NO_VAULT_MESSAGE)
     t0 = time.time()
     query = _clean(arguments["query"])
     n = min(arguments.get("n_results", 10), 30)
@@ -1643,6 +1646,8 @@ def handle_tool_call(name: str, arguments: dict, context: dict | None = None) ->
     it only goes into the search logs and never changes the results.
     """
     ctx = context or {}
+    if VAULT_PATH is None and name in ("vault_search", "vault_related", "vault_similar"):
+        return NO_VAULT_MESSAGE
     try:
         # Opened lazily, per tool. The textbook corpus lives in its own tables
         # (CHUNKS_TABLE / PARENTS_TABLE), so an install that indexes only

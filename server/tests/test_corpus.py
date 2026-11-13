@@ -366,3 +366,13 @@ def test_add_indexes_guideline_with_shared_manifest(tb, tmp_path, settings, fake
     assert set(df["chapter_number"]) == {1}
     assert set(df["page_confidence"]) == {"printed"} and set(df["split_method"]) == {"bookmarks"}
     assert set(df["printed_page_start"]) <= {"S1", "S2"}
+
+
+def test_add_prints_the_whole_config_error(tb, tmp_path, monkeypatch, capsys):
+    s = _settings(tmp_path, ok=False, error="RuntimeError: line one, e.g.\n  line two\nline three")
+    monkeypatch.setattr(corpus, "load_settings", lambda: s)
+    import textbook_indexer_v3 as V
+    monkeypatch.setattr(V, "live_paths", lambda: [])
+    assert corpus.main(["add", str(tb), "--db", str(tmp_path / "db")]) == 2
+    out = capsys.readouterr().out
+    assert "line one, e.g.\n  line two\nline three" in out

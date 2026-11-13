@@ -927,6 +927,8 @@ def show_stats():
 
 
 if __name__ == "__main__":
+    from config import require_vault_path
+    require_vault_path()
     parser = argparse.ArgumentParser(description="Vault Knowledge Graph Builder")
     parser.add_argument("--extract", type=int, metavar="N", nargs="?", const=0,
                         help="(Legacy) Run LLM extraction (N notes, or use --max-minutes)")

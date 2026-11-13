@@ -32,8 +32,16 @@ description use the new name. Env vars (`VAULT_SEARCH_*`), MCP server/tool names
   when it is a v3 database, else `~/.vault-search/textbook_db` / `lecture_db_v3`. Besides
   the indexer's own live-database guard, `add` refuses a v3 database built from a
   different corpus root (a run deletes rows of files outside its root).
+- **Corpus-only install: `VAULT_PATH` is optional.** Without it the server starts,
+  `textbook_search` / `lecture_search` and `vault_stats` work, `vault_search` /
+  `vault_similar` / `vault_related` (and the API's `/api/search`, `/api/related`,
+  `/api/similar`, `/api/reindex`, which return 503) say "No vault configured — set
+  VAULT_PATH …", chat simply has no vault context, and `indexer.py` /
+  `vault_indexer_v2.py` / `graph_builder.py` stop with the full setup message.
+  `corpus.py` no longer needs it. With `VAULT_PATH` set nothing changes. `env.example`
+  ships the line commented out.
 - Fixtures `examples/corpus-fixture/{textbook,lecture}` and `server/tests/test_corpus.py`
-  (22 tests: both fixtures pass, broken copies fail, `add --dry-run` commands and refusals,
+  (both fixtures pass, broken copies fail, `add --dry-run` commands and refusals,
   `add` end to end with a fake embedder).
 - `AGENTS.md` (with a `CLAUDE.md` bridge): setup notes for coding agents — the `python-dotenv`
   requirement and the separate-deployment caveat.
@@ -42,7 +50,10 @@ description use the new name. Env vars (`VAULT_SEARCH_*`), MCP server/tool names
 - README (EN + zh-TW): new "Add a corpus" section built on `corpus.py add`, with the
   `_Guidelines/` layout and `books.json`; a "Vault index v3" section (build with
   `--profile v3 --db`, set `VAULT_SEARCH_DB_PATH`, create the flag file, restart); the
-  repository layout lists the current files.
+  repository layout lists the current files. Step 0 creates a venv, and `claude mcp add`
+  uses that venv's Python by absolute path (macOS/Linux and Windows forms) — a bare
+  `python` started by the MCP client may lack `lancedb`. A "corpus only" paragraph gives
+  the minimal setup without a vault.
 
 ### Fixed
 - **`lecture_search` shows date, speaker and course again on a v3 lecture index.** The v3
@@ -56,6 +67,8 @@ description use the new name. Env vars (`VAULT_SEARCH_*`), MCP server/tool names
   were indexed with no chapter number, title, printed pages or `split_method`. A
   guideline folder without its own manifest now uses the shared one. Rows already in an
   index change only when that guideline is re-indexed (`--book <Name>`).
+- `corpus.py add` printed only the first line of a configuration error (cut off at "e.g.");
+  it prints the whole message now.
 - README's lecture example used `--db ~/.vault-search/lecture_db`, which the indexer
   refuses (it is the default live lecture path); it is `lecture_db_v3` now. `env.example`
   no longer says the lecture index is built with `textbook_indexer.py`, and marks which

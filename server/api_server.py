@@ -73,7 +73,7 @@ def _get_graph():
 
 # --- Config (resolved from environment / .env via config.py) ---
 from config import (
-    VAULT_PATH, CLAUDE_CMD, OLLAMA_VAULT_MODEL,
+    VAULT_PATH, NO_VAULT_MESSAGE, CLAUDE_CMD, OLLAMA_VAULT_MODEL,
     API_HOST, API_PORT, SEARCH_LOG_PATH, TEXTBOOK_PATH,
     SOURCE_BOOST_PATH, ASSISTANT_PERSONA, ASSISTANT_LANGUAGE,
 )
@@ -305,12 +305,19 @@ def _cosine_for_notes(table, query_embedding, notes: list[str]) -> dict[str, flo
 
 # --- Search & Similar endpoints ---
 
+def _no_vault():
+    """Vault endpoints on a corpus-only install (VAULT_PATH unset)."""
+    return JSONResponse(status_code=503, content={"error": NO_VAULT_MESSAGE})
+
+
 @app.get("/api/search")
 def search(
     query: str = Query(..., description="Search query"),
     n_results: int = Query(20, ge=1, le=30),
     folder: str | None = Query(None),
 ):
+    if VAULT_PATH is None:
+        return _no_vault()
     query = _clean(query)
     # v2 (parent-child tables) when the flag file is on, mirroring mcp_server's
     # dual retrieval; a missing or broken v2 index falls back to v1.
@@ -393,6 +400,8 @@ def related(
     """Find notes related to a given note via personalized PageRank over the
     wiki-link graph (LinearRAG-style). Seeds on the note's own links and surfaces
     multi-hop connected notes that semantic search may miss."""
+    if VAULT_PATH is None:
+        return _no_vault()
     graph = _get_graph()
     adjacency = graph.get("adjacency", {})
     if note not in adjacency:
@@ -604,6 +613,8 @@ def similar(
     note_name: str = Query(..., description="Note name without .md"),
     n_results: int = Query(10, ge=1, le=30),
 ):
+    if VAULT_PATH is None:
+        return _no_vault()
     # Whichever index is serving searches: the note's own stored vector is the
     # query here, so it has to come from the table the neighbours live in.
     table = (get_vault_chunks_table() if vault_v2_active() else None) or get_table()
@@ -681,6 +692,8 @@ def reindex_note(req: ReindexRequest):
     import logging
     logger = logging.getLogger("vault-search")
 
+    if VAULT_PATH is None:
+        return _no_vault()
     rel_path = req.file.replace("\\", "/")
     full_path = VAULT_PATH / rel_path
 

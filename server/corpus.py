@@ -356,8 +356,8 @@ def print_report(rep: Report, limit: int = 10) -> None:
 # =============================================================================
 
 def load_settings() -> dict:
-    """The server's configured paths. Falls back to the documented defaults when
-    config cannot load (e.g. VAULT_PATH unset) so --dry-run still works."""
+    """The server's configured paths (VAULT_PATH is not needed). Falls back to
+    the documented defaults when config cannot load so --dry-run still works."""
     try:
         import config as cfg
         return {"ok": True, "data_dir": Path(cfg.DATA_DIR),
@@ -367,11 +367,11 @@ def load_settings() -> dict:
                 "lecture_db_set": bool(os.environ.get("VAULT_SEARCH_LECTURE_DB_PATH")),
                 "books_meta": Path(cfg.BOOKS_META_PATH),
                 "env_file": HERE.parent / ".env", "error": ""}
-    except Exception as e:  # RuntimeError for VAULT_PATH, ImportError, ...
+    except Exception as e:  # ImportError (python-dotenv / lancedb missing), ...
         dd = Path(os.environ.get("VAULT_SEARCH_DATA_DIR") or "~/.vault-search").expanduser()
         return {"ok": False, "data_dir": dd, "textbook_db": None, "textbook_db_set": False,
                 "lecture_db": None, "lecture_db_set": False, "books_meta": dd / "books.json",
-                "env_file": HERE.parent / ".env", "error": str(e).splitlines()[0]}
+                "env_file": HERE.parent / ".env", "error": f"{type(e).__name__}: {e}"}
 
 
 def default_db(kind: str, s: dict) -> Path:
@@ -488,8 +488,8 @@ def add(args) -> int:
         print_env(kind, db, books_meta, s)
         return 0
     if not s["ok"]:
-        print(f"[add] the server configuration did not load: {s['error']}\n"
-              f"  Set VAULT_PATH (see env.example) and run again.")
+        print(f"[add] the server configuration did not load:\n{s['error']}\n"
+              f"  Fix the above (see env.example) and run again.")
         return 2
     rc = V.main(argv)
     if rc:
