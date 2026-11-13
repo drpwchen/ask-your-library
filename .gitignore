@@ -29,3 +29,6 @@ textbook_index_errors*.json
 Thumbs.db
 .idea/
 .vscode/
+
+# --- corpus.py add on the fixtures (README "Try it") ---
+fixture_db/

@@ -53,7 +53,8 @@ description use the new name. Env vars (`VAULT_SEARCH_*`), MCP server/tool names
   repository layout lists the current files. Step 0 creates a venv, and `claude mcp add`
   uses that venv's Python by absolute path (macOS/Linux and Windows forms) — a bare
   `python` started by the MCP client may lack `lancedb`. A "corpus only" paragraph gives
-  the minimal setup without a vault.
+  the minimal setup without a vault. The tool lists name every MCP tool; the fixture example uses a
+  relative `--db ./fixture_db` (works on Windows too); examples name a generic `~/my-corpus`.
 
 ### Fixed
 - **`lecture_search` shows date, speaker and course again on a v3 lecture index.** The v3

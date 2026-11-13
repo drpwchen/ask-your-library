@@ -211,12 +211,12 @@ def test_textbook_output_names_corpus_root(tmp_path, monkeypatch):
     """A v3 DB records its corpus; textbook_search output says what `file` is relative to."""
     st = tmp_path / "db" / "_v3_state"
     st.mkdir(parents=True)
-    (st / "index_meta.json").write_text(json.dumps({"corpus": "/x/textbook-md-v2"}), encoding="utf-8")
+    (st / "index_meta.json").write_text(json.dumps({"corpus": "/x/my-corpus"}), encoding="utf-8")
     monkeypatch.setattr(mcp_server, "TEXTBOOK_DB_PATH", tmp_path / "db")
     mcp_server._CORPUS_ROOT_CACHE.clear()
     res = [{"book": "B", "file": "B/ch01.md", "page_start": 1, "page_end": 1, "similarity": 0.5}]
     md = mcp_server.format_textbook_markdown(res, "q")
-    assert md.splitlines()[1] == "files are relative to `/x/textbook-md-v2`"
+    assert md.splitlines()[1] == "files are relative to `/x/my-corpus`"
     assert "relative to" not in mcp_server.format_textbook_markdown(res, "q", header="lecture_search")
     # a v2 DB (no state dir) adds nothing
     monkeypatch.setattr(mcp_server, "TEXTBOOK_DB_PATH", tmp_path / "v2db")

@@ -89,7 +89,7 @@ Obsidian 內建搜尋是字面比對——它找你打的字。但你幾個月�
 - **`scoring.py`** 對原始向量結果重新排序，可選的**路徑加權**（讓你更信任某些資料夾）、**時近性**（新筆記排前面）、**關係**加權。
 - **`ppr.py`** 用 **Personalized PageRank** 在 `[[wiki-link]]` 圖上排序筆記——HippoRAG / LinearRAG 風格的 random walk with restart。它驅動 **Related Notes** 與多跳的**查詢擴展**（以語意搜尋的 top 命中為種子做隨機遊走），找出純向量相似度漏掉的相關筆記。在作者的 vault 上，相較於樸素的 1-hop／共享連結擴展，sparse-bridge recall@10 從 ~60% 提升到 ~84%。
 - **`api_server.py`** 服務 plugin：語意搜尋、找相似、單篇重新索引，以及對話（含檢索增強的 context）。
-- **`mcp_server.py`** 把同一套搜尋以 MCP 工具開給 Claude Code 等：`vault_search`、`vault_similar`、`vault_stats`。
+- **`mcp_server.py`** 把同一套搜尋以 MCP 工具開給 Claude Code 等：`vault_search`、`vault_related`、`vault_similar`、`vault_stats`、`textbook_search`（設定了演講語料時再加 `lecture_search`）。
 - **選用 add-on：** 第二份長文**參考語料**（`textbook_indexer_v3.py`，parent-child 切塊、混合檢索、可選重排）與 `[[wikilink]]` + 實體的**知識圖譜**（`graph_builder.py`）。
 
 ---
@@ -161,7 +161,7 @@ claude mcp add vault-search -- C:\path\to\ask-your-library\.venv\Scripts\python.
 
 要填 **Step 0 那個 venv 裡 Python 的絕對路徑**（在啟用的 venv 裡跑 `python -c "import sys; print(sys.executable)"` 就會印出來）。MCP client 是自己啟動 server、不經過你的 shell：那裡的 `python` 可能是另一個沒裝 `lancedb` 的直譯器，server 就會連不上。
 
-之後 Claude Code（或任何 MCP client）就能呼叫 `vault_search`、`vault_similar`、`vault_stats`，以及（若你有索引參考語料）`textbook_search`，全部背後共用同一份地端索引、Personalized PageRank 擴展與重新排序。
+之後 Claude Code（或任何 MCP client）就能呼叫 `vault_search`、`vault_related`、`vault_similar`、`vault_stats`、`textbook_search`，以及（若你有索引演講語料）`lecture_search`，全部背後共用同一份地端索引、Personalized PageRank 擴展與重新排序。
 
 **如果你會同時開好幾個 session，改註冊 `mcp_thin.py`。** 每個 `mcp_server.py` session 都會自己開一份索引。在作者機器上實測：剛啟動 105 MB，跑完一次 `vault_search` 是 367 MB，跑完一次 `textbook_search`（會載入 tokenizer 與 parent map）則來到 2.2 GB——同時開幾個 session，一份索引就要吃掉好幾 GB。`mcp_thin.py` 是只用標準函式庫的轉發 client，把工具呼叫轉給正在跑的 `api_server.py`，由它獨自持有索引：
 
@@ -215,7 +215,7 @@ VAULT_SEARCH_TEXTBOOK_DB_PATH=/home/you/.vault-search/textbook_db
 - **`books.json`**（`VAULT_SEARCH_BOOKS_META`，預設 `~/.vault-search/books.json`；範例見 `examples/books.example.json`）補上資料夾名稱表達不了的資訊——版次、tier、`corpus_type`、`status`（`superseded`／`derivative`／`low_trust` 的來源不建索引、也不出現在搜尋結果）。key 是來源資料夾名稱；`check` 會標出對不到任何資料夾的 key。
 - **演講**：每門課一個資料夾、附 `_meta.md`，每個條目以 H1 開頭、接一行 `Source: YYYY-MM-DD 講者《課名》· …`——見[格式第 4 節](docs/corpus-format.md#4-kind-lecture)。
 
-先拿內附的範例試：`python server/corpus.py add examples/corpus-fixture/textbook --db /tmp/fixture_db`。
+先拿內附的範例試：`python server/corpus.py add examples/corpus-fixture/textbook --db ./fixture_db`。
 
 **只用語料、沒有 Obsidian vault。** 其他都不必設：跳過 `indexer.py`，`VAULT_PATH` 不要設。最小設定就是 Step 0 的 venv、`ollama pull qwen3-embedding:0.6b`、`corpus.py add`，再把它印出的那一行放進 `.env`（只有這一行的新檔即可，或用 export）。照[上面](#vault-search-mcp--在-claude-code或任何-mcp-client中使用)用 venv 的 Python 註冊 MCP server；`textbook_search`／`lecture_search` 可以用，`vault_*` 工具會回「No vault configured — set VAULT_PATH …」。
 

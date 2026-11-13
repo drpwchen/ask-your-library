@@ -394,11 +394,11 @@ def test_holding_report_only_suggests(tmp_path):
 # --------------------------------------------------------------------------- vault v3 helpers
 
 def test_vault_v3_exclusions():
-    assert V3.excluded("96Claude/backups/CLAUDE.md.bak-2026-07-03.md", set()) == "backup"
+    assert V3.excluded("Tooling/backups/CLAUDE.md.bak-2026-07-03.md", set()) == "backup"
     assert V3.excluded("98Templates/Disease.md", set()) == "templates"
     assert V3.excluded("Templates/x.md", set()) == "templates"
-    assert V3.excluded("96Claude/notes.md", {"96claude"}) == "excluded_folder"
-    assert V3.excluded("52Medicine/Stroke.md", {"96claude"}) == ""
+    assert V3.excluded("Tooling/notes.md", {"tooling"}) == "excluded_folder"
+    assert V3.excluded("52Medicine/Stroke.md", {"tooling"}) == ""
 
 
 def test_vault_v3_yaml_frontmatter():

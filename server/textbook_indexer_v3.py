@@ -1,7 +1,7 @@
 """
 Textbook indexer v3 — provenance-carrying chunks into a NEW database.
 
-    python textbook_indexer_v3.py --corpus ~/textbook-md-v2 --db ~/.vault-search/lance_db_v3
+    python textbook_indexer_v3.py --corpus ~/my-corpus --db ~/.vault-search/lance_db_v3
     python textbook_indexer_v3.py --corpus ... --db ... --book Braddom_PM-and-R_7e_2021
     python textbook_indexer_v3.py --corpus ... --db ... --audit           # per-chapter coverage
     python textbook_indexer_v3.py --corpus ... --dry-run                  # chunk only, no GPU
@@ -845,7 +845,7 @@ _LEASE = None
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Textbook indexer v3 (provenance, table units, new DB)")
-    p.add_argument("--corpus", required=True, help="corpus root, e.g. ~/Documents/Projects/textbook-md-v2")
+    p.add_argument("--corpus", required=True, help="corpus root, e.g. ~/my-corpus")
     p.add_argument("--db", help="output LanceDB directory (never the live one)")
     p.add_argument("--book", help="one book folder (or guideline folder); always re-embedded")
     p.add_argument("--model", default=DEFAULT_MODEL)

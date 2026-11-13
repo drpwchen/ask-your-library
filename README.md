@@ -89,7 +89,7 @@ The design priority is **local-first and private**:
 - **`scoring.py`** reranks raw vector hits with optional **path weighting** (trust some folders more), **recency** (newer notes rank higher), and **relation** boosts.
 - **`ppr.py`** ranks notes by **Personalized PageRank** over the `[[wiki-link]]` graph — a HippoRAG / LinearRAG-style random-walk-with-restart. It powers **Related Notes** and multi-hop **query expansion** (seeding the walk on the top semantic hits), surfacing relevant notes that pure vector similarity misses. On the author's vault this lifted sparse-bridge recall@10 from ~60% to ~84% versus naive 1-hop / shared-link expansion.
 - **`api_server.py`** serves the plugin: semantic search, find-similar, single-note reindex, and chat (with retrieval-augmented context).
-- **`mcp_server.py`** exposes the same search to MCP clients (e.g. Claude Code) as `vault_search`, `vault_similar`, `vault_stats`.
+- **`mcp_server.py`** exposes the same search to MCP clients (e.g. Claude Code) as `vault_search`, `vault_related`, `vault_similar`, `vault_stats`, `textbook_search` (and `lecture_search` when a lecture corpus is configured).
 - **Optional add-ons:** a second long-form **reference corpus** (`textbook_indexer_v3.py`, parent-child chunking, hybrid search, optional reranker) and a **knowledge graph** of `[[wikilinks]]` + entities (`graph_builder.py`).
 
 ---
@@ -161,7 +161,7 @@ claude mcp add vault-search -- C:\path\to\ask-your-library\.venv\Scripts\python.
 
 Give the **absolute path of the Python in the venv from Step 0** (`python -c "import sys; print(sys.executable)"` inside the activated venv prints it). The MCP client starts the server itself, outside your shell: a bare `python` there can be another interpreter without `lancedb`, and the server then fails to connect.
 
-Now Claude Code (or any MCP client) can call `vault_search`, `vault_similar`, `vault_stats`, and — if you indexed a reference corpus — `textbook_search`, all backed by the same local index, Personalized-PageRank expansion, and reranking.
+Now Claude Code (or any MCP client) can call `vault_search`, `vault_related`, `vault_similar`, `vault_stats`, `textbook_search` and — if you indexed a lecture corpus — `lecture_search`, all backed by the same local index, Personalized-PageRank expansion, and reranking.
 
 **If you keep several sessions open, register `mcp_thin.py` instead.** Each `mcp_server.py` session opens its own copy of the index. Measured here: 105 MB at startup, 367 MB after one `vault_search`, and 2.2 GB once a `textbook_search` loads the tokenizer and parent maps — so a few concurrent sessions cost gigabytes for a single index. `mcp_thin.py` is a stdlib-only client that forwards tool calls to a running `api_server.py`, which then holds the index alone:
 
@@ -215,7 +215,7 @@ Put that line in `.env` and restart `api_server.py` (and start a new MCP session
 - **`books.json`** (`VAULT_SEARCH_BOOKS_META`, default `~/.vault-search/books.json`; see `examples/books.example.json`) adds what a folder name cannot say — edition, tier, `corpus_type`, and `status` (`superseded` / `derivative` / `low_trust` sources are not indexed and are hidden from search). Keys are the source folder names; `check` flags keys that match no folder.
 - **Lectures**: one folder per course with a `_meta.md`, and entries that start with an H1 and a `Source: YYYY-MM-DD Speaker《Course title》· …` line — see [§4 of the format](docs/corpus-format.md#4-kind-lecture).
 
-Try it on the bundled fixtures: `python server/corpus.py add examples/corpus-fixture/textbook --db /tmp/fixture_db`.
+Try it on the bundled fixtures: `python server/corpus.py add examples/corpus-fixture/textbook --db ./fixture_db`.
 
 **Corpus only, no Obsidian vault.** Nothing else is required: skip `indexer.py` and leave `VAULT_PATH` unset. The minimal setup is the venv from Step 0, `ollama pull qwen3-embedding:0.6b`, `corpus.py add`, and the one line it prints in `.env` (create the file with just that line, or export it). Register the MCP server with the venv's Python as [above](#vault-search-mcp--use-it-from-claude-code-or-any-mcp-client); `textbook_search` / `lecture_search` answer, and the `vault_*` tools reply "No vault configured — set VAULT_PATH …".
 
