@@ -122,7 +122,7 @@ ollama pull gemma2:9b
 git clone https://github.com/drpwchen/ask-your-library.git
 cd ask-your-library
 python -m venv .venv
-source .venv/bin/activate    # Windows：.venv\Scripts\activate
+source .venv/bin/activate    # Windows Git Bash：source .venv/Scripts/activate · PowerShell：.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
 cp env.example .env          # 然後編輯 .env——取消 VAULT_PATH 的註解，設成你的 vault 路徑
