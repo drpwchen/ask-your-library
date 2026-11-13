@@ -1241,7 +1241,8 @@ def _textbook_search_v2_raw(arguments: dict, ctx: dict | None = None,
     # which sits in the entry's H1 parent rather than in every hit.
     if corpus == "lecture" and formatted_results:
         src = lecture_meta.source_by_file(
-            parents_table, [r["file"] for r in formatted_results], _escape_sql)
+            parents_table, [r["file"] for r in formatted_results], _escape_sql,
+            corpus_root=textbook_corpus_root(LECTURE_DB_PATH))
         for r in formatted_results:
             r.update(src.get(r["file"], {"date": "", "speaker": "", "course_title": "", "source_line": ""}))
 

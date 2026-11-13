@@ -182,19 +182,46 @@ claude mcp add vault-search -- python "/abs/path/to/server/mcp_thin.py"
 
 ---
 
+## 加入一份語料（教科書、指引、演講）
+
+參考資料以**語料資料夾**的形式進入 vault-search：就是一般資料夾加 Markdown，排法照 [`docs/corpus-format.md`](docs/corpus-format.md)（格式 `t2n-corpus/1`）。[textbook-to-note](https://github.com/drpwchen/textbook-to-note) 從 PDF 教科書與指引產生，[lecture-to-notes](https://github.com/drpwchen/lecture-to-notes) 從演講錄影產生，你自己的腳本也可以。一行指令就能搜：
+
+```bash
+ollama pull qwen3-embedding:0.6b                  # 語料用的 embedding 模型（GPU 非必要）
+python server/corpus.py check /path/to/corpus     # 檢查排法（只讀檔）
+python server/corpus.py add   /path/to/corpus     # 檢查 → 建索引 → 稽核 → 印出 .env 設定行
+```
+
+`add` 從資料夾的 `corpus.json` 讀出種類，建進 `~/.vault-search/textbook_db`（教科書、指引）或 `~/.vault-search/lecture_db_v3`（演講），也可用 `--db PATH` 指定。最後會印出 server 需要的那一行設定，例如
+
+```
+VAULT_SEARCH_TEXTBOOK_DB_PATH=/home/you/.vault-search/textbook_db
+```
+
+把它加進 `.env`，重啟 `api_server.py`（直接跑 `mcp_server.py` 的話，開一個新的 MCP session），`textbook_search`（或 `lecture_search`）就會從這份索引回答。之後要加書：把書的資料夾放進同一個根目錄，再跑一次 `add`，只有變動過的檔會重新 embed。`--dry-run` 只印出 indexer 指令、不執行。一個資料庫只對應一個語料根目錄：由別的根目錄建出來的資料庫 `add` 會拒絕；server 拿去做別的用途的資料庫，indexer 本身也會拒寫。
+
+- **指引**放在 `<root>/_Guidelines/<名稱>/`，一份一個子資料夾：每份指引是獨立來源，標成 `guideline`，排序時有一點加分。
+- **`books.json`**（`VAULT_SEARCH_BOOKS_META`，預設 `~/.vault-search/books.json`；範例見 `examples/books.example.json`）補上資料夾名稱表達不了的資訊——版次、tier、`corpus_type`、`status`（`superseded`／`derivative`／`low_trust` 的來源不建索引、也不出現在搜尋結果）。key 是來源資料夾名稱；`check` 會標出對不到任何資料夾的 key。
+- **演講**：每門課一個資料夾、附 `_meta.md`，每個條目以 H1 開頭、接一行 `Source: YYYY-MM-DD 講者《課名》· …`——見[格式第 4 節](docs/corpus-format.md#4-kind-lecture)。
+
+先拿內附的範例試：`python server/corpus.py add examples/corpus-fixture/textbook --db /tmp/fixture_db`。
+
+---
+
 ## 選用 add-on
 
 <details>
 <summary><b>第二份參考語料（教科書／手冊）</b></summary>
 
-如果你把一大批長文參考資料（轉檔的 PDF、手冊）與筆記分開存放，可用 parent-child 切塊索引，做到命中精準又帶上下文：
+長文參考資料（轉檔的 PDF、手冊、指引）用 parent-child 切塊索引，命中精準又帶上下文。用 [`corpus.py add`](#加入一份語料教科書指引演講) 建；它實際跑的是
 
 ```bash
-ollama pull qwen3-embedding:0.6b
-cd server && python textbook_indexer_v3.py --corpus /path/to/reference-md --db ~/.vault-search/textbook_db
-export VAULT_SEARCH_TEXTBOOK_DB_PATH=~/.vault-search/textbook_db
-export VAULT_SEARCH_TEXTBOOK_PATH=/path/to/reference-md
+cd server
+python textbook_indexer_v3.py --corpus /path/to/corpus --db ~/.vault-search/textbook_db
+python textbook_indexer_v3.py --corpus /path/to/corpus --db ~/.vault-search/textbook_db --audit
 ```
+
+再在 `.env` 加上 `VAULT_SEARCH_TEXTBOOK_DB_PATH=~/.vault-search/textbook_db`。
 
 `textbook_indexer_v3.py` 寫進自己的 DB（server 拿去做別的用途的 DB，例如 vault 的，它會拒寫），每個 chunk 記下語料根目錄、頁碼出處與表格單位，濾掉參考文獻，並建好混合檢索需要的全文索引。重跑只重新 embed 有變動的檔；`--book <資料夾>` 重建單本，`--audit` 逐章檢查有沒有漏。舊的 `textbook_indexer.py`（沒有全文索引、寫進 vault 的 DB）仍可用，但新功能不會再加在那裡。
 
@@ -204,7 +231,27 @@ export VAULT_SEARCH_TEXTBOOK_PATH=/path/to/reference-md
 
 **混合檢索與重排。** `textbook_search` 預設把向量與全文檢索結果用 RRF 合併（`VAULT_SEARCH_TEXTBOOK_RETRIEVAL=hybrid`；需要 `textbook_indexer_v3.py` 建的全文索引，沒有就退回純向量）。有 CUDA GPU 的話可再加 cross-encoder 重排：把 `VAULT_SEARCH_RERANK_PYTHON` 指向一個裝了 CUDA 版 `torch`＋`transformers` 的 Python，每次搜尋先取 50 筆，用 `BAAI/bge-reranker-v2-m3` 重新打分後留前 n 筆。模型跑在獨立行程（`server/reranker_service.py`）：第一次查詢時啟動（幾秒），閒置 10 分鐘自動結束，別的工作要 GPU lease 時立刻結束——這段期間的搜尋就是不重排。作者自己 435 題的教科書評測上 MRR 約 +0.08，每次查詢約 0.5 秒（RTX 3070 Ti）；`similarity` 仍是 cosine，cross-encoder 分數另放在 `rerank_score`。
 
-**演講語料。** 把第二份語料建進另一個 DB（`textbook_indexer_v3.py --corpus /path/to/lecture-md --db ~/.vault-search/lecture_db`；`--corpus` 指向「子資料夾就是各門課」的那一層），再把 `VAULT_SEARCH_LECTURE_DB_PATH` 指過去，就會多一個 `lecture_search` 工具，與 `textbook_search` 分開排名。每門課資料夾的 `_meta.md` 不會出現在結果裡；每筆結果帶 `date`、`speaker`、`course_title`，從該條目的 `Source:` 行解析（`Source: 2025-02-15 講者《課名》· …`），讀不出來的欄位留空，不猜。
+**演講語料。** `lecture` 種類的語料（[格式](docs/corpus-format.md#4-kind-lecture)）建進自己的 DB：`corpus.py add` 跑的是 `textbook_indexer_v3.py --corpus /path/to/lecture-corpus --db ~/.vault-search/lecture_db_v3`（`--corpus` 指向「子資料夾就是各門課」的那一層），並提示你把 `VAULT_SEARCH_LECTURE_DB_PATH` 指過去。之後就會多一個 `lecture_search` 工具，與 `textbook_search` 分開排名。每門課資料夾的 `_meta.md` 不會出現在結果裡；每筆結果帶 `date`、`speaker`、`course_title`，從該條目的 `Source:` 行解析（`Source: 2025-02-15 講者《課名》· …`），讀不出來的欄位留空，不猜。
+</details>
+
+<details>
+<summary><b>Vault 索引 v3（筆記的 parent-child 切塊）</b></summary>
+
+Step 0 的 `indexer.py` 是整篇筆記 embed。parent-child 索引比對小塊、回傳它所在的整段；`v3` profile 另外會正確讀 YAML frontmatter、跳過備份檔與範本資料夾、限制切塊長度，並寫入 `scope` 欄位。需要 `ollama pull qwen3-embedding:0.6b`，建在新的資料庫裡，所以切換前舊索引照常服務：
+
+```bash
+cd server
+python vault_indexer_v2.py --profile v3 --db ~/.vault-search/lance_db_v3                 # 建立
+python vault_indexer_v2.py --profile v3 --db ~/.vault-search/lance_db_v3 --incremental   # 之後：只處理有變動的筆記
+```
+
+讓 server 改用它：
+
+1. `.env` 加 `VAULT_SEARCH_DB_PATH=~/.vault-search/lance_db_v3`
+2. 建立旗標檔 `~/.vault-search/vault_v2.enabled`（`touch` 即可；刪掉就退回整篇筆記索引）
+3. 重啟 `api_server.py`（以及任何 `mcp_server.py` session）。
+
+如果你的教科書資料表原本放在 vault 的資料庫裡（沒設 `VAULT_SEARCH_TEXTBOOK_DB_PATH`），先把這個變數設成舊資料庫——它預設跟著 `VAULT_SEARCH_DB_PATH`。
 </details>
 
 <details>
@@ -262,12 +309,18 @@ python graph_builder.py --ner      # 選用：scispaCy/NER 實體抽取
 ```
 server/      indexer · scoring · ppr · api_server · mcp_server   （核心三套組）
              mcp_thin.py                                    （省記憶體的 MCP client）
-             textbook_indexer · graph_builder              （選用 add-on）
+             vault_indexer_v2 · vault_v3                    （筆記的 parent-child 索引、v3 profile）
+             corpus.py                                      （檢查／加入語料資料夾）
+             textbook_indexer_v3 · chunker_v3 · provenance · table_units   （語料 indexer）
+             books_meta · lecture_meta · scope · reranker · reranker_service  （查詢端輔助）
+             textbook_indexer.py                            （舊版語料 indexer，留給 v2 DB）
+             graph_builder                                  （選用的知識圖譜）
              config.py                                      （所有設定，環境變數驅動）
-             tests/                                         （純標準函式庫，不需索引）
+             tests/                                         （pytest；不需索引、Ollama 或 GPU）
 plugin/      main.js · manifest.json · styles.css           （Obsidian plugin）
-examples/    source_boost.example.json
-docs/images/ 截圖
+eval/        檢索／回答評測工具
+examples/    books · scope_map · source_boost 範例；corpus-fixture/（t2n-corpus/1 範例語料）
+docs/        corpus-format.md（語料資料夾規格）· images/（截圖）
 env.example  複製成 .env
 ```
 

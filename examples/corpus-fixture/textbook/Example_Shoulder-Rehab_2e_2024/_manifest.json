@@ -1,0 +1,18 @@
+{
+ "schema": 1,
+ "book": "Example_Shoulder-Rehab_2e_2024",
+ "source_pdf": "Example_Shoulder-Rehab_2e_2024.pdf",
+ "split_method": "bookmarks",
+ "page_labels": {"11": "1", "12": "2", "13": "3", "14": "4", "15": "5", "16": "6"},
+ "page_confidence": "printed",
+ "files": [
+  {"file": "ch01_Examination.md", "seq": 1, "chapter_number": 1, "title": "Examination of the Shoulder",
+   "pdf_page_start": 11, "pdf_page_end": 13, "kind": "body"},
+  {"file": "ch02_Exercise.md", "seq": 2, "chapter_number": 2, "title": "Exercise Progression",
+   "pdf_page_start": 14, "pdf_page_end": 16, "kind": "body"}
+ ],
+ "sections": [
+  {"level": 2, "title": "Inspection", "pdf_page": 11, "file": "ch01_Examination.md", "kind": "body"},
+  {"level": 2, "title": "Range of motion", "pdf_page": 12, "file": "ch01_Examination.md", "kind": "body"}
+ ]
+}

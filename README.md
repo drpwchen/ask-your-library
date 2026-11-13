@@ -182,19 +182,46 @@ Everything is driven by environment variables (see **`env.example`** for the ful
 
 ---
 
+## Add a corpus (textbooks, guidelines, lectures)
+
+Reference material reaches vault-search as a **corpus folder**: plain folders of Markdown laid out as [`docs/corpus-format.md`](docs/corpus-format.md) describes (format `t2n-corpus/1`). [textbook-to-note](https://github.com/drpwchen/textbook-to-note) writes one from PDF textbooks and guidelines, [lecture-to-notes](https://github.com/drpwchen/lecture-to-notes) from recorded lectures, and any script of your own can. One command makes it searchable:
+
+```bash
+ollama pull qwen3-embedding:0.6b                  # embedding model for corpora (a GPU is optional)
+python server/corpus.py check /path/to/corpus     # validate the layout (reads files only)
+python server/corpus.py add   /path/to/corpus     # check → index → audit → print the .env line
+```
+
+`add` reads the kind from the folder's `corpus.json` and indexes into `~/.vault-search/textbook_db` (textbooks, guidelines) or `~/.vault-search/lecture_db_v3` (lectures) — or `--db PATH`. It ends by printing the one setting the server needs, e.g.
+
+```
+VAULT_SEARCH_TEXTBOOK_DB_PATH=/home/you/.vault-search/textbook_db
+```
+
+Put that line in `.env` and restart `api_server.py` (and start a new MCP session if you run `mcp_server.py` directly): `textbook_search` — or `lecture_search` — now answers from it. To add a book later, put its folder under the same root and run `add` again; only changed files are re-embedded. `--dry-run` prints the indexer commands without running them. One database holds one corpus root: `add` refuses a database built from another root, and — like the indexer itself — any database the server uses for something else.
+
+- **Guidelines** go in `<root>/_Guidelines/<Name>/`, one sub-folder each: every guideline is its own source, tagged `guideline`, and gets a small ranking prior.
+- **`books.json`** (`VAULT_SEARCH_BOOKS_META`, default `~/.vault-search/books.json`; see `examples/books.example.json`) adds what a folder name cannot say — edition, tier, `corpus_type`, and `status` (`superseded` / `derivative` / `low_trust` sources are not indexed and are hidden from search). Keys are the source folder names; `check` flags keys that match no folder.
+- **Lectures**: one folder per course with a `_meta.md`, and entries that start with an H1 and a `Source: YYYY-MM-DD Speaker《Course title》· …` line — see [§4 of the format](docs/corpus-format.md#4-kind-lecture).
+
+Try it on the bundled fixtures: `python server/corpus.py add examples/corpus-fixture/textbook --db /tmp/fixture_db`.
+
+---
+
 ## Optional add-ons
 
 <details>
 <summary><b>Secondary reference corpus (textbooks / manuals)</b></summary>
 
-If you keep a large corpus of long-form reference docs (converted PDFs, manuals) separate from your notes, index it with parent-child chunking for precise hits *with* surrounding context:
+A corpus of long-form reference docs (converted PDFs, manuals, guidelines) is indexed with parent-child chunking for precise hits *with* surrounding context. Build it with [`corpus.py add`](#add-a-corpus-textbooks-guidelines-lectures); what that runs is
 
 ```bash
-ollama pull qwen3-embedding:0.6b
-cd server && python textbook_indexer_v3.py --corpus /path/to/reference-md --db ~/.vault-search/textbook_db
-export VAULT_SEARCH_TEXTBOOK_DB_PATH=~/.vault-search/textbook_db
-export VAULT_SEARCH_TEXTBOOK_PATH=/path/to/reference-md
+cd server
+python textbook_indexer_v3.py --corpus /path/to/corpus --db ~/.vault-search/textbook_db
+python textbook_indexer_v3.py --corpus /path/to/corpus --db ~/.vault-search/textbook_db --audit
 ```
+
+followed by `VAULT_SEARCH_TEXTBOOK_DB_PATH=~/.vault-search/textbook_db` in `.env`.
 
 `textbook_indexer_v3.py` writes its own database (it refuses one the server uses for anything else, such as the vault's), records the corpus root, page provenance and table units per chunk, skips reference lists, and builds the full-text index hybrid search needs. Re-runs only re-embed changed files; `--book <folder>` re-embeds one book, `--audit` checks every chapter made it in. The older `textbook_indexer.py` (no FTS, writes into the vault DB) still works but is not where new behaviour lands.
 
@@ -204,7 +231,27 @@ Adds a `textbook_search` tool (MCP + HTTP). Its output says which corpus root th
 
 **Hybrid search and reranking.** `textbook_search` fuses vector and full-text results (RRF) by default (`VAULT_SEARCH_TEXTBOOK_RETRIEVAL=hybrid`; needs the full-text index `textbook_indexer_v3.py` builds, otherwise it falls back to vector). With a CUDA GPU you can add a cross-encoder reranker: set `VAULT_SEARCH_RERANK_PYTHON` to a Python that has CUDA `torch` + `transformers`, and each search takes a pool of 50, rescores it with `BAAI/bge-reranker-v2-m3` and keeps the top n. The model runs in a separate process (`server/reranker_service.py`) that starts on the first query (a few seconds), exits after 10 idle minutes, and exits at once when another job claims the GPU lease — searches meanwhile are simply not reranked. On the author's 435-question textbook eval this added about +0.08 MRR at ~0.5 s per query (RTX 3070 Ti); `similarity` stays the cosine, the cross-encoder score is returned as `rerank_score`.
 
-**Lecture corpus.** Index a second reference corpus into its own DB (`textbook_indexer_v3.py --corpus /path/to/lecture-md --db ~/.vault-search/lecture_db`; `--corpus` is the folder whose subfolders are the courses) and point `VAULT_SEARCH_LECTURE_DB_PATH` at it: a `lecture_search` tool appears, ranked separately from `textbook_search`. Each course folder's `_meta.md` is left out of the results, and every hit carries the `date`, `speaker` and `course_title` parsed from its entry's `Source:` line (`Source: 2025-02-15 Speaker《Course title》· …`); a field that cannot be read is empty, never guessed.
+**Lecture corpus.** A `lecture` corpus ([format](docs/corpus-format.md#4-kind-lecture)) goes into its own database: `corpus.py add` runs `textbook_indexer_v3.py --corpus /path/to/lecture-corpus --db ~/.vault-search/lecture_db_v3` (`--corpus` is the folder whose subfolders are the courses) and tells you to point `VAULT_SEARCH_LECTURE_DB_PATH` at it. Then a `lecture_search` tool appears, ranked separately from `textbook_search`. Each course folder's `_meta.md` is left out of the results, and every hit carries the `date`, `speaker` and `course_title` parsed from its entry's `Source:` line (`Source: 2025-02-15 Speaker《Course title》· …`); a field that cannot be read is empty, never guessed.
+</details>
+
+<details>
+<summary><b>Vault index v3 (parent-child chunks for your notes)</b></summary>
+
+Step 0's `indexer.py` embeds whole notes. The parent-child index matches a small chunk and quotes the whole section around it; its `v3` profile also reads real YAML frontmatter, skips backup copies and template folders, caps chunk length and writes a `scope` column. It needs `ollama pull qwen3-embedding:0.6b` and is built into a new database, so the old index keeps serving until you switch:
+
+```bash
+cd server
+python vault_indexer_v2.py --profile v3 --db ~/.vault-search/lance_db_v3                 # build
+python vault_indexer_v2.py --profile v3 --db ~/.vault-search/lance_db_v3 --incremental   # later: changed notes only
+```
+
+To switch the server to it:
+
+1. in `.env`: `VAULT_SEARCH_DB_PATH=~/.vault-search/lance_db_v3`
+2. create the flag file `~/.vault-search/vault_v2.enabled` (`touch` it; delete it to fall back to the whole-note index)
+3. restart `api_server.py` (and any `mcp_server.py` session).
+
+If your textbook tables lived in the vault database (no `VAULT_SEARCH_TEXTBOOK_DB_PATH` set), set that variable to the old database first — it defaults to `VAULT_SEARCH_DB_PATH`.
 </details>
 
 <details>
@@ -262,12 +309,18 @@ Want a cloud embedder instead of Ollama? The embedding call is isolated in `inde
 ```
 server/      indexer · scoring · ppr · api_server · mcp_server   (core three-piece set)
              mcp_thin.py                                    (low-memory MCP client)
-             textbook_indexer · graph_builder              (optional add-ons)
+             vault_indexer_v2 · vault_v3                    (parent-child vault index, v3 profile)
+             corpus.py                                      (check / add a corpus folder)
+             textbook_indexer_v3 · chunker_v3 · provenance · table_units   (corpus indexer)
+             books_meta · lecture_meta · scope · reranker · reranker_service  (search-side helpers)
+             textbook_indexer.py                            (older corpus indexer, kept for v2 DBs)
+             graph_builder                                  (optional knowledge graph)
              config.py                                      (all settings, env-driven)
-             tests/                                         (stdlib, no index needed)
+             tests/                                         (pytest; no index, Ollama or GPU needed)
 plugin/      main.js · manifest.json · styles.css           (Obsidian plugin)
-examples/    source_boost.example.json
-docs/images/ screenshots
+eval/        retrieval / answer evaluation harness
+examples/    books · scope_map · source_boost examples; corpus-fixture/ (t2n-corpus/1 samples)
+docs/        corpus-format.md (corpus folder spec) · images/ (screenshots)
 env.example  copy to .env
 ```
 

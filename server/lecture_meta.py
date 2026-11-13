@@ -98,13 +98,48 @@ def describe(r: dict) -> str:
     return " · ".join(p for p in parts if p)
 
 
-def source_by_file(parents_table, files, escape) -> dict[str, dict]:
+def source_from_file(path) -> str:
+    """The `Source:` value of an entry file on disk: first `Source:` line before
+    the first `##` heading (the entry's H1 block), or ""."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16384).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    block = re.split(r"(?m)^#{2,6}\s", head, maxsplit=1)[0]
+    return find_source_line(block)
+
+
+def _parsed(line: str) -> dict:
+    parsed = parse_source(line)
+    return {"date": parsed["date"], "speaker": parsed["speaker"],
+            "course_title": parsed["course"], "source_line": line}
+
+
+def source_by_file(parents_table, files, escape, corpus_root: str = "") -> dict[str, dict]:
     """{file: parsed Source} for the given entry files, read from the parents
     table (the H1 parent of an entry holds its Source line). One query; files
-    without a Source line are simply absent from the result."""
+    without a Source line are simply absent from the result.
+
+    The v3 chunker drops `Source:` lines as converter bookkeeping, so a v3
+    lecture index holds none: files the table cannot answer are read from
+    ``corpus_root`` (the root recorded by the indexer) when it is given."""
     uniq = [f for f in dict.fromkeys(files) if f and not is_meta_file(f)]
-    if parents_table is None or not uniq:
+    if not uniq:
         return {}
+    out = _source_from_table(parents_table, uniq, escape) if parents_table is not None else {}
+    if corpus_root:
+        from pathlib import Path
+        root = Path(corpus_root)
+        for f in uniq:
+            if f not in out:
+                line = source_from_file(root / f)
+                if line:
+                    out[f] = _parsed(line)
+    return out
+
+
+def _source_from_table(parents_table, uniq, escape) -> dict[str, dict]:
     quoted = ",".join("'" + escape(f) + "'" for f in uniq)
     df = (parents_table.search()
           .where(f"file IN ({quoted}) AND text LIKE '%Source:%'")
@@ -118,7 +153,5 @@ def source_by_file(parents_table, files, escape) -> dict[str, dict]:
             continue
         line = find_source_line(str(row["text"]))
         if line:
-            parsed = parse_source(line)
-            out[f] = {"date": parsed["date"], "speaker": parsed["speaker"],
-                      "course_title": parsed["course"], "source_line": line}
+            out[f] = _parsed(line)
     return out

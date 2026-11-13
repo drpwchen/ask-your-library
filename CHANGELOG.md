@@ -8,13 +8,45 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
-## [3.2.1] — 2026-11-13 — agent notes; reference chapters stay out of the v3 index
+## [3.2.1] — 2026-11-13 — corpus folders with one command; reference chapters stay out of the v3 index
 
 ### Added
+- **Corpus folder format `t2n-corpus/1`** (`docs/corpus-format.md`): the one specification of
+  how textbooks, guidelines and lectures reach vault-search — a `corpus.json` marker
+  (`{"format": "t2n-corpus/1", "kind": "textbook" | "lecture"}`), the textbook layout
+  (source folders, `_Guidelines/<Name>/`, page markers, the `_manifest.json` fields the
+  indexer reads, `books.json`) and the lecture layout (course folders, `_meta.md`, entries
+  that open with an H1 and a `Source:` line). It writes down what the v3 indexer already
+  reads; nothing new is required of existing corpora (a missing marker is a warning).
+- **`server/corpus.py`**: `check <root>` validates a corpus folder (errors exit 1,
+  `--strict` fails on warnings too, `--json` for tools); `add <root>` checks, runs
+  `textbook_indexer_v3.py` (changed files only on re-runs) and its `--audit`, and prints the
+  `.env` line the server needs. Default database: the one already configured for that kind
+  when it is a v3 database, else `~/.vault-search/textbook_db` / `lecture_db_v3`. Besides
+  the indexer's own live-database guard, `add` refuses a v3 database built from a
+  different corpus root (a run deletes rows of files outside its root).
+- Fixtures `examples/corpus-fixture/{textbook,lecture}` and `server/tests/test_corpus.py`
+  (22 tests: both fixtures pass, broken copies fail, `add --dry-run` commands and refusals,
+  `add` end to end with a fake embedder).
 - `AGENTS.md` (with a `CLAUDE.md` bridge): setup notes for coding agents — the `python-dotenv`
   requirement and the separate-deployment caveat.
 
+### Changed
+- README (EN + zh-TW): new "Add a corpus" section built on `corpus.py add`, with the
+  `_Guidelines/` layout and `books.json`; a "Vault index v3" section (build with
+  `--profile v3 --db`, set `VAULT_SEARCH_DB_PATH`, create the flag file, restart); the
+  repository layout lists the current files.
+
 ### Fixed
+- **`lecture_search` shows date, speaker and course again on a v3 lecture index.** The v3
+  chunker drops `Source:` lines as converter bookkeeping, so a v3 lecture database holds
+  none (measured on the author's index: 0 of 16,877 parents) and every hit came back with
+  those fields empty. Entries the parents table cannot answer are now read from the corpus
+  root the indexer recorded (`_v3_state/index_meta.json`). No reindex needed.
+- README's lecture example used `--db ~/.vault-search/lecture_db`, which the indexer
+  refuses (it is the default live lecture path); it is `lecture_db_v3` now. `env.example`
+  no longer says the lecture index is built with `textbook_indexer.py`, and marks which
+  textbook settings only the older indexer reads.
 - **v3 textbook indexer: a chapter file named like a reference list is no longer indexed
   past its heading.** A file such as `ch74_REFERENCES.md` with no manifest kind (every
   `_Guidelines/` source) slipped through all three filters: the heading is a plain text
