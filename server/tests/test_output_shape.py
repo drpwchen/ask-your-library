@@ -43,6 +43,37 @@ if mcp_server is not None:
         rows = mcp_server.format_results(df, include_excerpt=True)
         assert len(rows[0]["excerpt"]) == mcp_server.EXCERPT_CHARS
 
+    def test_v2_excerpt_is_the_whole_section_by_default():
+        """The matched child can sit at the END of its parent: a head cut lost it
+        (8% of chat results before the change). Default quotes the whole section."""
+        import lancedb as ldb
+        tmp = tempfile.mkdtemp(prefix="vsearch_excerpt_")
+        tbl = ldb.connect(tmp).create_table("vault_chunks_v2", [{
+            "vector": [1.0, 0.0, 0.0, 0.0], "parent_id": "p0", "file": "n.md", "note": "n",
+            "section_path": "", "folder": "", "tags": "", "mtime": 0.0, "text": "TAIL HIT",
+        }], mode="overwrite")
+        section = "head " * 400 + "TAIL HIT"          # ~2000 chars, hit at the end
+
+        class _Emb:
+            def embed(self, model, input, options=None):
+                return {"embeddings": [[1.0, 0.0, 0.0, 0.0]]}
+
+        saved = (mcp_server.get_vault_chunks_table, mcp_server.get_ollama,
+                 mcp_server.fetch_vault_parents, mcp_server.VAULT_EXCERPT_CHARS)
+        mcp_server.get_vault_chunks_table = lambda: tbl
+        mcp_server.get_ollama = lambda: _Emb()
+        mcp_server.fetch_vault_parents = lambda ids: {"p0": {"text": section}}
+        try:
+            mcp_server.VAULT_EXCERPT_CHARS = 0
+            got = mcp_server._vault_retrieve_v2("q", None, 10, True)
+            assert got[0]["excerpt"] == section
+            mcp_server.VAULT_EXCERPT_CHARS = 800          # the rollback setting
+            got = mcp_server._vault_retrieve_v2("q", None, 10, True)
+            assert got[0]["excerpt"] == section[:800]
+        finally:
+            (mcp_server.get_vault_chunks_table, mcp_server.get_ollama,
+             mcp_server.fetch_vault_parents, mcp_server.VAULT_EXCERPT_CHARS) = saved
+
     def test_entities_follow_result_order_not_hash_order():
         graph_entities = {
             "A": [{"name": "a", "type": "condition"}],
@@ -71,6 +102,7 @@ if __name__ == "__main__":
         print("SKIP: dependencies not installed")
     else:
         test_excerpt_budget_is_one_number_everywhere()
+        test_v2_excerpt_is_the_whole_section_by_default()
         test_entities_follow_result_order_not_hash_order()
         test_entity_cap_keeps_the_top_ranked_notes()
-        print("OK: 3 tests passed")
+        print("OK: 4 tests passed")

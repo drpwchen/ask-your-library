@@ -127,6 +127,13 @@ VAULT_SEARCH_LOG_PATH = _path(
     "VAULT_SEARCH_VAULT_LOG_PATH", str(DATA_DIR / "vault_search_log.jsonl")
 )
 
+# Characters of the matched section quoted as a v2 vault excerpt (vault_search
+# with include_excerpt, and the chat context). 0 = the whole section, which is
+# what the textbook and lecture passages already get. Measured before the
+# change: an 800-char head left the matched passage entirely outside the
+# excerpt for 8% of chat results and cut it for another 18%. Set 800 to go back.
+VAULT_EXCERPT_CHARS = int(os.environ.get("VAULT_SEARCH_VAULT_EXCERPT_CHARS", "0"))
+
 # Instruction prefix prepended to every vault QUERY before embedding (Qwen3
 # instruct format). Documents are embedded WITHOUT it, so changing this changes
 # only how queries are phrased — never the stored vectors.

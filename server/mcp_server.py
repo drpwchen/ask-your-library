@@ -95,7 +95,7 @@ from config import (
     LECTURE_DB_PATH, LECTURE_SEARCH_LOG_PATH, BOOKS_META_PATH,
     TEXTBOOK_RETRIEVAL, TEXTBOOK_TABLE_SUFFIX,
     TEXTBOOK_RERANK, RERANK_POOL, RERANK_MAX_LENGTH, TEXTBOOK_DB_PATH,
-    RERANK_GUIDELINE_PRIOR, RERANK_YEAR_PRIOR,
+    RERANK_GUIDELINE_PRIOR, RERANK_YEAR_PRIOR, VAULT_EXCERPT_CHARS,
 )
 import scope as S
 import books_meta
@@ -409,10 +409,9 @@ def _cosine_for_notes(table, query_embedding, notes: list[str]) -> dict[str, flo
     return best
 
 
-# Characters of chunk text returned as an excerpt. The v2 retrieval path uses
-# the same budget, so vault_search and vault_similar quote a note to the same
-# depth — they used to differ (500 vs 800), which read as vault_similar
-# truncating notes for no stated reason.
+# Characters of v1 chunk text returned as an excerpt (format_results: the v1
+# vault_search fallback and vault_similar). The v2 path quotes the whole matched
+# section instead — see VAULT_EXCERPT_CHARS in config.py.
 EXCERPT_CHARS = 800
 
 
@@ -630,7 +629,7 @@ TOOLS = [
                 },
                 "include_excerpt": {
                     "type": "boolean",
-                    "description": "Include text excerpt in results (default: false). Set true when you need content for summarization.",
+                    "description": "Include the matched section's text in results (default: false). The excerpt is the whole section the hit belongs to, not a fixed-length head. Set true when you need content for summarization.",
                     "default": False
                 },
                 "boost_recent": {
@@ -1386,8 +1385,19 @@ def _vault_retrieve_v2(query: str, folder: str | None, fetch_n: int,
         for entry, pid, child_text in pending:
             parent = parent_rows.get(pid)
             text = str(parent.get("text", "")) if parent else child_text
-            entry["excerpt"] = _clean(text[:EXCERPT_CHARS])
+            entry["excerpt"] = _clean(vault_excerpt(text))
     return formatted
+
+
+def vault_excerpt(section_text: str) -> str:
+    """The v2 excerpt: the whole matched section unless VAULT_EXCERPT_CHARS caps it.
+
+    A head-of-section cut is the wrong unit: the child that matched can sit
+    anywhere in its parent, so a fixed head drops it as often as it keeps it.
+    """
+    if VAULT_EXCERPT_CHARS > 0:
+        return section_text[:VAULT_EXCERPT_CHARS]
+    return section_text
 
 
 class ScopeRefused(Exception):

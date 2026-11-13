@@ -8,6 +8,25 @@ Versions before 2.6.0 were not tagged. `plugin/manifest.json` carries the Obsidi
 plugin's own version (2.5.1) and moves only when something inside `plugin/` changes,
 so it deliberately does not track these tags.
 
+## [3.1.0] — 2026-11-13 — vault excerpts quote the whole matched section
+
+### Changed
+- **v2 vault excerpts are the whole matched section, not its first 800
+  characters** (`vault_search` with `include_excerpt`, and the chat context).
+  Search matches a small child chunk but quotes its parent section, and the
+  child can sit anywhere in that section. Measured on 60 logged queries before
+  the change: in the chat context (3 vault notes per question) 72% of excerpts
+  were cut, the matched passage fell entirely outside the excerpt for 8% and
+  was cut part-way for another 18%. Over 387 `vault_search` results (n=10) the
+  800-char head kept the whole matched passage 64% of the time; the whole
+  section keeps it every time, at a median of 7.4k characters per query
+  (p90 11.8k) instead of 4.0k. Textbook and lecture passages already quoted
+  the whole section; vault now matches them.
+- New setting `VAULT_SEARCH_VAULT_EXCERPT_CHARS` (default `0` = whole
+  section). Set `800` to restore the previous behaviour.
+- The v1 path (`vault_similar`, and the v1 fallback of `vault_search`) still
+  quotes 800 characters of chunk text.
+
 ## [3.0.0] — 2026-11-13 — the v3 index generation
 
 No code changes over 2.12.3. 3.0.0 marks the end of the retrieval rework
